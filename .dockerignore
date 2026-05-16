@@ -1,0 +1,13 @@
+.env
+.venv
+.git
+__pycache__
+*.py[cod]
+*.sqlite3
+backend/db.sqlite3
+backend/staticfiles
+frontend/node_modules
+frontend/.next
+frontend/*.tsbuildinfo
+.dev-*.log
+.dev-*.err

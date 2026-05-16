@@ -1,0 +1,135 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-shift_accounting}
+      POSTGRES_USER: ${POSTGRES_USER:-shift_accounting}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    image: shift-accounting-backend:latest
+    build:
+      context: ./backend
+    env_file: .env
+    environment:
+      DJANGO_DB_ENGINE: django.db.backends.postgresql
+      DJANGO_DB_NAME: ${POSTGRES_DB:-shift_accounting}
+      DJANGO_DB_USER: ${POSTGRES_USER:-shift_accounting}
+      DJANGO_DB_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+      DJANGO_DB_HOST: db
+      DJANGO_DB_PORT: 5432
+    command: sh -c "python manage.py migrate --noinput && python manage.py collectstatic --noinput"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - backend_static:/app/staticfiles
+    restart: "no"
+
+  backend:
+    image: shift-accounting-backend:latest
+    build:
+      context: ./backend
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DJANGO_DB_ENGINE: django.db.backends.postgresql
+      DJANGO_DB_NAME: ${POSTGRES_DB:-shift_accounting}
+      DJANGO_DB_USER: ${POSTGRES_USER:-shift_accounting}
+      DJANGO_DB_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+      DJANGO_DB_HOST: db
+      DJANGO_DB_PORT: 5432
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - backend_static:/app/staticfiles
+    expose:
+      - "8000"
+
+  frontend:
+    image: shift-accounting-frontend:latest
+    build:
+      context: ./frontend
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DJANGO_API_BASE_URL: ${DJANGO_API_BASE_URL:-http://backend:8000}
+      NODE_ENV: production
+    depends_on:
+      backend:
+        condition: service_started
+    expose:
+      - "3000"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      backend:
+        condition: service_started
+      frontend:
+        condition: service_started
+
+  bot:
+    image: shift-accounting-backend:latest
+    build:
+      context: ./backend
+    profiles:
+      - bot
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DJANGO_DB_ENGINE: django.db.backends.postgresql
+      DJANGO_DB_NAME: ${POSTGRES_DB:-shift_accounting}
+      DJANGO_DB_USER: ${POSTGRES_USER:-shift_accounting}
+      DJANGO_DB_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+      DJANGO_DB_HOST: db
+      DJANGO_DB_PORT: 5432
+    command: python manage.py run_shift_bot
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  sync:
+    image: shift-accounting-backend:latest
+    build:
+      context: ./backend
+    profiles:
+      - sync
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DJANGO_DB_ENGINE: django.db.backends.postgresql
+      DJANGO_DB_NAME: ${POSTGRES_DB:-shift_accounting}
+      DJANGO_DB_USER: ${POSTGRES_USER:-shift_accounting}
+      DJANGO_DB_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+      DJANGO_DB_HOST: db
+      DJANGO_DB_PORT: 5432
+    command: python manage.py sync_shifts --loop --interval ${SHIFT_SYNC_INTERVAL:-3600}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  postgres_data:
+  backend_static:
+  caddy_data:
+  caddy_config:
