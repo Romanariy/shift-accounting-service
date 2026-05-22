@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   AuditLogEntry,
   CompanionEntry,
@@ -28,6 +28,8 @@ const payCodes = [
   { value: "phone_with_big_admin", label: "Телефоны при большом админе" },
   { value: "phone_without_big_admin", label: "Телефоны без большого админа" },
 ];
+
+const AUTO_REFRESH_INTERVAL_MS = 5000;
 
 type EntryForm = {
   id: number | null;
@@ -66,6 +68,11 @@ type PayRuleForm = {
   activeFrom: string;
   activeTo: string;
   isActive: boolean;
+};
+
+type LoadDataOptions = {
+  force?: boolean;
+  silent?: boolean;
 };
 
 function todayIso() {
@@ -170,6 +177,7 @@ export default function ShiftDashboard() {
   const [selectedAuditTitle, setSelectedAuditTitle] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const isLoadingRef = useRef(false);
 
   const activeEmployees = useMemo(
     () => employees.filter((employee) => employee.isActive),
@@ -184,7 +192,12 @@ export default function ShiftDashboard() {
   const { year, month: monthNumber } = splitMonth(month);
   const reportUrl = `/api/shifts/report.xlsx?year=${year}&month=${monthNumber}`;
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async ({ force = false, silent = false }: LoadDataOptions = {}) => {
+    if (isLoadingRef.current && !force) {
+      return;
+    }
+
+    isLoadingRef.current = true;
     const query = new URLSearchParams({
       year: String(year),
       month: String(monthNumber),
@@ -202,7 +215,9 @@ export default function ShiftDashboard() {
       query.set("status", statusFilter);
     }
 
-    setIsLoading(true);
+    if (!silent) {
+      setIsLoading(true);
+    }
     setError(null);
 
     try {
@@ -218,12 +233,33 @@ export default function ShiftDashboard() {
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Не удалось загрузить данные.");
     } finally {
-      setIsLoading(false);
+      isLoadingRef.current = false;
+      if (!silent) {
+        setIsLoading(false);
+      }
     }
   }, [employeeFilter, monthNumber, statusFilter, workTypeFilter, year]);
 
   useEffect(() => {
-    void loadData();
+    void loadData({ force: true });
+  }, [loadData]);
+
+  useEffect(() => {
+    const refreshVisiblePage = () => {
+      if (document.visibilityState === "visible") {
+        void loadData({ silent: true });
+      }
+    };
+
+    const intervalId = window.setInterval(refreshVisiblePage, AUTO_REFRESH_INTERVAL_MS);
+    window.addEventListener("focus", refreshVisiblePage);
+    document.addEventListener("visibilitychange", refreshVisiblePage);
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", refreshVisiblePage);
+      document.removeEventListener("visibilitychange", refreshVisiblePage);
+    };
   }, [loadData]);
 
   const resetEntryForm = () => {
@@ -254,7 +290,7 @@ export default function ShiftDashboard() {
       body: JSON.stringify(payload),
     });
     resetEntryForm();
-    await loadData();
+    await loadData({ force: true });
   };
 
   const editEntry = (entry: WorkEntry) => {
@@ -275,7 +311,7 @@ export default function ShiftDashboard() {
 
   const deleteEntry = async (entry: WorkEntry) => {
     await fetchJson(`/api/shifts/entries/${entry.kind}/${entry.id}`, { method: "DELETE" });
-    await loadData();
+    await loadData({ force: true });
   };
 
   const loadAudit = async (entry: WorkEntry) => {
@@ -309,7 +345,7 @@ export default function ShiftDashboard() {
       }
     );
     setEmployeeForm(createEmployeeForm());
-    await loadData();
+    await loadData({ force: true });
   };
 
   const editEmployee = (employee: Employee) => {
@@ -348,7 +384,7 @@ export default function ShiftDashboard() {
       }
     );
     setPayRuleForm(createPayRuleForm());
-    await loadData();
+    await loadData({ force: true });
   };
 
   const editPayRule = (rule: PayRule) => {

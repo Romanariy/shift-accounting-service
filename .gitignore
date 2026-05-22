@@ -13,3 +13,4 @@ frontend/*.tsbuildinfo
 .dev-*.log
 .dev-*.err
 npm-debug.log*
+backups/

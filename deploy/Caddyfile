@@ -1,5 +1,8 @@
 {$APP_DOMAIN::80} {
     encode zstd gzip
+    basic_auth {
+        {$SITE_BASIC_AUTH_USER} {$SITE_BASIC_AUTH_PASSWORD_HASH}
+    }
 
     handle /admin* {
         reverse_proxy backend:8000

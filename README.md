@@ -47,6 +47,9 @@ npm run dev
 
 Откройте `http://127.0.0.1:3000`.
 
+Интерфейс автоматически обновляет данные каждые 5 секунд и при возврате на вкладку,
+поэтому записи от Telegram-бота появляются без ручного обновления страницы.
+
 ## Docker-развертывание на VPS
 
 В Docker-режиме поднимаются:
@@ -83,6 +86,30 @@ DJANGO_SECURE_SSL_REDIRECT=1
 TELEGRAM_BOT_TOKEN=123456:telegram-token
 DJANGO_API_BASE_URL=http://backend:8000
 ```
+
+### Защита сайта логином и паролем
+
+Внешний доступ к сайту, админке и API закрыт через Caddy Basic Auth.
+Сгенерируйте хэш пароля на VPS:
+
+```bash
+docker run --rm --entrypoint caddy caddy:2-alpine hash-password --plaintext 'your-strong-password'
+```
+
+Вставьте результат в `.env` в одинарных кавычках:
+
+```env
+SITE_BASIC_AUTH_USER=admin
+SITE_BASIC_AUTH_PASSWORD_HASH='$2a$14$...'
+```
+
+После изменения `.env` пересоздайте Caddy:
+
+```bash
+docker compose up -d --force-recreate caddy
+```
+
+Теперь браузер будет спрашивать логин и пароль перед открытием сайта.
 
 Если домена пока нет, оставьте:
 
@@ -139,10 +166,32 @@ mkdir -p backups
 docker compose exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' > backups/shift_accounting_$(date +%F_%H-%M).sql
 ```
 
+Автоматический сжатый бэкап с хранением последних 14 дней:
+
+```bash
+sh deploy/backup-db.sh
+```
+
+Добавить ежедневный бэкап в cron:
+
+```bash
+crontab -e
+```
+
+```cron
+15 3 * * * cd /opt/shift-accounting-service && sh deploy/backup-db.sh >> backups/backup.log 2>&1
+```
+
 Восстановление:
 
 ```bash
 docker compose exec -T db sh -c 'psql -U "$POSTGRES_USER" "$POSTGRES_DB"' < backups/file.sql
+```
+
+Если бэкап сжатый:
+
+```bash
+gzip -dc backups/file.sql.gz | docker compose exec -T db sh -c 'psql -U "$POSTGRES_USER" "$POSTGRES_DB"'
 ```
 
 ### Как быстро выгружать проект на сервер
