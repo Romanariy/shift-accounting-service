@@ -5,7 +5,6 @@ class WorkType:
     DEFAULT_SHIFT = "default_shift"
     BIG_ADMIN = "big_admin"
     SMALL_ADMIN = "small_admin"
-    PHOTOBAR = "photobar"
     CYCLORAMA_PAINTING = "cyclorama_painting"
     CLEANING = "cleaning"
 
@@ -13,7 +12,6 @@ class WorkType:
 class PayCode:
     BIG_ADMIN = WorkType.BIG_ADMIN
     SMALL_ADMIN = WorkType.SMALL_ADMIN
-    PHOTOBAR = WorkType.PHOTOBAR
     CYCLORAMA_PAINTING = WorkType.CYCLORAMA_PAINTING
     CLEANING = WorkType.CLEANING
     COMPANION = "companion"
@@ -47,7 +45,6 @@ class SyncStatus:
 WORK_TYPE_CHOICES = (
     (WorkType.BIG_ADMIN, "Большой админ"),
     (WorkType.SMALL_ADMIN, "Малый админ"),
-    (WorkType.PHOTOBAR, "Админ Фотобар"),
     (WorkType.CYCLORAMA_PAINTING, "Покраска циклораммы"),
     (WorkType.CLEANING, "Уборка"),
 )
@@ -121,14 +118,6 @@ INITIAL_PAY_RULES = (
     {
         "code": PayCode.SMALL_ADMIN,
         "title": "Малый админ",
-        "calculation_type": CalculationType.HOURLY,
-        "hourly_rate": "200.00",
-        "min_amount": "600.00",
-        "max_amount": "1200.00",
-    },
-    {
-        "code": PayCode.PHOTOBAR,
-        "title": "Админ Фотобар",
         "calculation_type": CalculationType.HOURLY,
         "hourly_rate": "200.00",
         "min_amount": "600.00",

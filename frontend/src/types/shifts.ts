@@ -1,12 +1,19 @@
 export type WorkType =
   | "big_admin"
   | "small_admin"
-  | "photobar"
   | "cyclorama_painting"
   | "cleaning";
 
 export type EntryStatus = "confirmed" | "needs_review";
 export type EntryKind = "shift" | "companion";
+
+export type Organization = {
+  id: number;
+  name: string;
+  aliases: string[];
+  excelSheet: string;
+  isActive: boolean;
+};
 
 export type Employee = {
   id: number;
@@ -21,6 +28,7 @@ export type Employee = {
 };
 
 export type PayRule = {
+  organizationId: number | null;
   id: number;
   code: string;
   title: string;
@@ -35,6 +43,8 @@ export type PayRule = {
 };
 
 export type ShiftEntry = {
+  organizationId: number | null;
+  organizationName: string;
   kind: "shift";
   id: number;
   date: string;
@@ -55,6 +65,8 @@ export type ShiftEntry = {
 };
 
 export type CompanionEntry = {
+  organizationId: number | null;
+  organizationName: string;
   kind: "companion";
   id: number;
   date: string;

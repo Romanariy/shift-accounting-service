@@ -4,6 +4,8 @@ from . import views
 
 
 urlpatterns = [
+    path("shifts/organizations/", views.organizations_api, name="shift-organizations"),
+    path("shifts/organizations/<int:organization_id>/", views.organizations_api, name="shift-organization-detail"),
     path("shifts/employees/", views.employees_api, name="shift-employees"),
     path("shifts/employees/<int:employee_id>/", views.employees_api, name="shift-employee-detail"),
     path("shifts/pay-rules/", views.pay_rules_api, name="shift-pay-rules"),
@@ -16,4 +18,3 @@ urlpatterns = [
     path("shifts/report.xlsx", views.report_xlsx_api, name="shift-report-xlsx"),
     path("shifts/sync-status/", views.sync_status_api, name="shift-sync-status"),
 ]
-

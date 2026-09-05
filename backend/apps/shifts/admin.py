@@ -1,6 +1,17 @@
 from django.contrib import admin
 
-from .models import AuditLog, CompanionEntry, Employee, PayRule, ShiftEntry, SyncOutbox, TelegramSource
+from .models import AuditLog, CompanionEntry, Employee, Organization, PayRule, ShiftEntry, SyncOutbox, TelegramSource
+
+
+@admin.register(Organization)
+class OrganizationAdmin(admin.ModelAdmin):
+    list_display = ("name", "excel_sheet", "is_active")
+
+    def save_model(self, request, obj, form, change):
+        super().save_model(request, obj, form, change)
+        if not change:
+            from .organizations import copy_initial_rates
+            copy_initial_rates(obj)
 
 
 @admin.register(Employee)
@@ -14,6 +25,7 @@ class EmployeeAdmin(admin.ModelAdmin):
 class PayRuleAdmin(admin.ModelAdmin):
     list_display = (
         "title",
+        "organization",
         "code",
         "calculation_type",
         "hourly_rate",
@@ -24,7 +36,7 @@ class PayRuleAdmin(admin.ModelAdmin):
         "active_to",
         "is_active",
     )
-    list_filter = ("code", "calculation_type", "is_active")
+    list_filter = ("organization", "code", "calculation_type", "is_active")
     search_fields = ("title", "code")
 
 
@@ -37,7 +49,7 @@ class TelegramSourceAdmin(admin.ModelAdmin):
 
 @admin.register(ShiftEntry)
 class ShiftEntryAdmin(admin.ModelAdmin):
-    list_display = ("date", "employee_name_snapshot", "work_type", "hours", "calculated_amount", "status")
+    list_display = ("date", "organization", "employee_name_snapshot", "work_type", "hours", "calculated_amount", "status")
     list_filter = ("work_type", "status", "source", "sync_status", "deleted_at")
     search_fields = ("employee_name_snapshot", "comment", "raw_text", "telegram_author_username")
     readonly_fields = ("created_at", "updated_at")
@@ -46,7 +58,7 @@ class ShiftEntryAdmin(admin.ModelAdmin):
 
 @admin.register(CompanionEntry)
 class CompanionEntryAdmin(admin.ModelAdmin):
-    list_display = ("date", "employee_name_snapshot", "count", "calculated_amount", "status")
+    list_display = ("date", "organization", "employee_name_snapshot", "count", "calculated_amount", "status")
     list_filter = ("status", "source", "sync_status", "deleted_at")
     search_fields = ("employee_name_snapshot", "comment", "raw_text", "telegram_author_username")
     readonly_fields = ("created_at", "updated_at")

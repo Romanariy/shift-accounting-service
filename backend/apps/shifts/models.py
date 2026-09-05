@@ -1,3 +1,6 @@
+import re
+
+from django.core.exceptions import ValidationError
 from django.db import models
 
 from .constants import (
@@ -47,7 +50,44 @@ class Employee(models.Model):
         return self.short_name or self.full_name
 
 
+class Organization(models.Model):
+    name = models.CharField("Название", max_length=120, unique=True)
+    aliases = models.JSONField("Алиасы", default=list, blank=True)
+    excel_sheet = models.CharField("Лист Excel", max_length=31)
+    is_active = models.BooleanField("Активна", default=True)
+    is_default = models.BooleanField(default=False, editable=False)
+
+    class Meta:
+        ordering = ("id",)
+
+    def __str__(self):
+        return self.name
+
+    def clean(self):
+        self.name = " ".join(self.name.split()).rstrip(".")
+        self.excel_sheet = self.excel_sheet.strip()
+        if not isinstance(self.aliases, list) or any(not isinstance(a, str) for a in self.aliases):
+            raise ValidationError("Алиасы должны быть списком строк.")
+        self.aliases = list(dict.fromkeys(" ".join(a.split()).rstrip(".").casefold() for a in self.aliases if a.strip()))
+        tokens = {a.casefold() for a in [self.name, *self.aliases]}
+        if not self.name or "" in tokens:
+            raise ValidationError("Название и алиасы не могут быть пустыми.")
+        for other in Organization.objects.exclude(pk=self.pk):
+            if tokens & {a.casefold() for a in [other.name, *other.aliases]}:
+                raise ValidationError(f"Название или алиас уже используется: {other.name}.")
+        sheet = self.excel_sheet
+        if (not sheet or len(sheet) > 31 or re.search(r"[\\/*?:\[\]\x00-\x1f]", sheet)
+                or sheet.startswith("'") or sheet.endswith("'")
+                or sheet.casefold() in {"сопровождения", "телефоны", "без организации", "history"}):
+            raise ValidationError("Недопустимое или зарезервированное название листа Excel.")
+        existing = next((org for org in Organization.objects.exclude(pk=self.pk)
+                         if org.excel_sheet.casefold() == sheet.casefold()), None)
+        if existing:
+            self.excel_sheet = existing.excel_sheet
+
+
 class PayRule(models.Model):
+    organization = models.ForeignKey(Organization, on_delete=models.PROTECT, null=True, blank=True)
     code = models.CharField("Код", max_length=48, choices=PAY_CODE_CHOICES)
     title = models.CharField("Название", max_length=160)
     calculation_type = models.CharField(
@@ -85,6 +125,25 @@ class PayRule(models.Model):
     def __str__(self):
         return f"{self.title} с {self.active_from:%d.%m.%Y}"
 
+    def clean(self):
+        shift_codes = dict(WORK_TYPE_CHOICES)
+        if self.code in shift_codes and not self.organization_id and not self.pk:
+            raise ValidationError("Для нового тарифа смены укажите организацию.")
+        if self.code not in shift_codes and self.organization_id:
+            raise ValidationError("Сопровождения и телефоны используют общие тарифы.")
+        if self.active_to and self.active_to < self.active_from:
+            raise ValidationError("Конец действия тарифа не может быть раньше начала.")
+        for field in ("hourly_rate", "fixed_amount", "min_amount", "max_amount"):
+            value = getattr(self, field)
+            if value is not None and value < 0:
+                raise ValidationError("Ставки и ограничения не могут быть отрицательными.")
+        if self.min_amount is not None and self.max_amount is not None and self.min_amount > self.max_amount:
+            raise ValidationError("Минимальная сумма не может превышать максимальную.")
+        if self.calculation_type == CalculationType.HOURLY and self.hourly_rate is None:
+            raise ValidationError("Укажите почасовую ставку.")
+        if self.calculation_type != CalculationType.HOURLY and self.fixed_amount is None:
+            raise ValidationError("Укажите фиксированную сумму.")
+
 
 class TelegramSource(models.Model):
     title = models.CharField("Название", max_length=160)
@@ -105,6 +164,7 @@ class TelegramSource(models.Model):
 
 
 class EntryBase(models.Model):
+    organization = models.ForeignKey(Organization, on_delete=models.PROTECT, null=True, blank=True)
     date = models.DateField("Дата")
     employee = models.ForeignKey(
         Employee,

@@ -9,6 +9,7 @@ import type {
   EntryKind,
   EntryStatus,
   PayRule,
+  Organization,
   ShiftEntry,
   WorkEntry,
   WorkType,
@@ -17,7 +18,6 @@ import type {
 const workTypes: Array<{ value: WorkType; label: string }> = [
   { value: "big_admin", label: "Большой админ" },
   { value: "small_admin", label: "Малый админ" },
-  { value: "photobar", label: "Фотобар" },
   { value: "cyclorama_painting", label: "Покраска циклораммы" },
   { value: "cleaning", label: "Уборка" },
 ];
@@ -32,6 +32,8 @@ const payCodes = [
 const AUTO_REFRESH_INTERVAL_MS = 5000;
 
 type EntryForm = {
+  organizationId: string;
+  allowNoOrganization: boolean;
   id: number | null;
   kind: EntryKind;
   date: string;
@@ -57,6 +59,8 @@ type EmployeeForm = {
 };
 
 type PayRuleForm = {
+  organizationId: string;
+  allowGlobal: boolean;
   id: number | null;
   code: string;
   title: string;
@@ -90,6 +94,8 @@ function splitMonth(value: string) {
 
 function createEntryForm(date = todayIso()): EntryForm {
   return {
+    organizationId: "",
+    allowNoOrganization: false,
     id: null,
     kind: "shift",
     date,
@@ -119,6 +125,8 @@ function createEmployeeForm(): EmployeeForm {
 
 function createPayRuleForm(): PayRuleForm {
   return {
+    organizationId: "",
+    allowGlobal: false,
     id: null,
     code: "small_admin",
     title: "Малый админ",
@@ -163,6 +171,8 @@ function getEntryAmount(entry: WorkEntry) {
 }
 
 export default function ShiftDashboard() {
+  const [organizations, setOrganizations] = useState<Organization[]>([]);
+  const [organizationForm, setOrganizationForm] = useState({ id: null as number | null, name: "", aliases: "", excelSheet: "Фокус и Фотобар", isActive: true });
   const [month, setMonth] = useState(currentMonth());
   const [employeeFilter, setEmployeeFilter] = useState("");
   const [workTypeFilter, setWorkTypeFilter] = useState("");
@@ -218,16 +228,18 @@ export default function ShiftDashboard() {
     if (!silent) {
       setIsLoading(true);
     }
-    setError(null);
+    if (!silent) setError(null);
 
     try {
-      const [employeePayload, payRulePayload, entryPayload] = await Promise.all([
+      const [employeePayload, payRulePayload, entryPayload, organizationPayload] = await Promise.all([
         fetchJson<{ employees: Employee[] }>("/api/shifts/employees"),
         fetchJson<{ payRules: PayRule[] }>("/api/shifts/pay-rules"),
         fetchJson<EntriesResponse>(`/api/shifts/entries?${query.toString()}`),
+        fetchJson<{ organizations: Organization[] }>("/api/shifts/organizations"),
       ]);
 
       setEmployees(employeePayload.employees);
+      setOrganizations(organizationPayload.organizations);
       setPayRules(payRulePayload.payRules);
       setEntries(entryPayload);
     } catch (loadError) {
@@ -266,11 +278,29 @@ export default function ShiftDashboard() {
     setEntryForm(createEntryForm(`${month}-01`));
   };
 
+  const handleAction = (action: Promise<unknown>) => {
+    setError(null);
+    void action.catch((failure: unknown) => setError(failure instanceof Error ? failure.message : "Не удалось сохранить изменения."));
+  };
+
+  const resetOrganizationForm = () => setOrganizationForm({ id: null, name: "", aliases: "", excelSheet: "Фокус и Фотобар", isActive: true });
+
+  const saveOrganization = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    await fetchJson(organizationForm.id ? `/api/shifts/organizations/${organizationForm.id}` : "/api/shifts/organizations", {
+      method: organizationForm.id ? "PUT" : "POST",
+      body: JSON.stringify({ ...organizationForm, aliases: organizationForm.aliases.split(",").map((alias) => alias.trim()).filter(Boolean) }),
+    });
+    resetOrganizationForm();
+    await loadData({ force: true });
+  };
+
   const saveEntry = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
     const payload = {
       kind: entryForm.kind,
+      organizationId: entryForm.organizationId ? Number(entryForm.organizationId) : null,
       date: entryForm.date,
       employeeId: entryForm.employeeId ? Number(entryForm.employeeId) : null,
       workType: entryForm.workType,
@@ -296,6 +326,8 @@ export default function ShiftDashboard() {
   const editEntry = (entry: WorkEntry) => {
     setEntryForm({
       id: entry.id,
+      organizationId: entry.organizationId ? String(entry.organizationId) : "",
+      allowNoOrganization: entry.organizationId === null,
       kind: entry.kind,
       date: entry.date,
       employeeId: entry.employeeId ? String(entry.employeeId) : "",
@@ -365,6 +397,7 @@ export default function ShiftDashboard() {
     event.preventDefault();
     const payload = {
       code: payRuleForm.code,
+      organizationId: workTypes.some((type) => type.value === payRuleForm.code) && payRuleForm.organizationId ? Number(payRuleForm.organizationId) : null,
       title: payRuleForm.title,
       calculationType: payRuleForm.calculationType,
       hourlyRate: payRuleForm.hourlyRate,
@@ -390,6 +423,8 @@ export default function ShiftDashboard() {
   const editPayRule = (rule: PayRule) => {
     setPayRuleForm({
       id: rule.id,
+      organizationId: rule.organizationId ? String(rule.organizationId) : "",
+      allowGlobal: rule.organizationId === null,
       code: rule.code,
       title: rule.title,
       calculationType: rule.calculationType,
@@ -482,7 +517,7 @@ export default function ShiftDashboard() {
       ) : null}
 
       <section className="shift-layout">
-        <form className="shift-panel" onSubmit={saveEntry}>
+        <form className="shift-panel" onSubmit={(event) => handleAction(saveEntry(event))}>
           <div className="shift-panel__header">
             <h2>{entryForm.id ? "Редактирование записи" : "Новая запись"}</h2>
             <button className="ui-button ui-button--outline ui-button--sm" type="button" onClick={resetEntryForm}>
@@ -520,7 +555,8 @@ export default function ShiftDashboard() {
                 className="ui-select"
                 value={entryForm.employeeId}
                 onChange={(event) =>
-                  setEntryForm((form) => ({ ...form, employeeId: event.target.value }))
+                  setEntryForm((form) => ({ ...form, employeeId: event.target.value,
+                    workType: activeEmployees.find((employee) => String(employee.id) === event.target.value)?.defaultWorkType ?? form.workType }))
                 }
               >
                 <option value="">Не назначен</option>
@@ -528,6 +564,16 @@ export default function ShiftDashboard() {
                   <option key={employee.id} value={employee.id}>
                     {employee.shortName}
                   </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Организация
+              <select className="ui-select" required={!entryForm.allowNoOrganization} value={entryForm.organizationId}
+                onChange={(event) => setEntryForm((form) => ({ ...form, organizationId: event.target.value }))}>
+                <option value="">{entryForm.allowNoOrganization ? "Без организации" : "Выберите организацию"}</option>
+                {organizations.filter((org) => org.isActive || String(org.id) === entryForm.organizationId).map((org) => (
+                  <option key={org.id} value={org.id}>{org.name}{org.isActive ? "" : " (отключена)"}</option>
                 ))}
               </select>
             </label>
@@ -636,6 +682,7 @@ export default function ShiftDashboard() {
             <div className="shift-table__head">
               <span>Дата</span>
               <span>Кто</span>
+              <span>Организация</span>
               <span>Тип</span>
               <span>Объем</span>
               <span>Сумма</span>
@@ -645,6 +692,7 @@ export default function ShiftDashboard() {
               <div className="shift-table__row" key={`${entry.kind}-${entry.id}`}>
                 <span>{entry.date}</span>
                 <span>{entry.employeeName || "Не назначен"}</span>
+                <span>{entry.organizationName || "Без организации"}</span>
                 <span>
                   {entry.kind === "shift" ? (entry as ShiftEntry).workTypeLabel : "Сопровождение"}
                 </span>
@@ -658,10 +706,10 @@ export default function ShiftDashboard() {
                   <button className="ui-button ui-button--outline ui-button--sm" type="button" onClick={() => editEntry(entry)}>
                     Править
                   </button>
-                  <button className="ui-button ui-button--secondary ui-button--sm" type="button" onClick={() => loadAudit(entry)}>
+                  <button className="ui-button ui-button--secondary ui-button--sm" type="button" onClick={() => handleAction(loadAudit(entry))}>
                     История
                   </button>
-                  <button className="ui-button ui-button--outline ui-button--sm" type="button" onClick={() => deleteEntry(entry)}>
+                  <button className="ui-button ui-button--outline ui-button--sm" type="button" onClick={() => handleAction(deleteEntry(entry))}>
                     Удалить
                   </button>
                 </span>
@@ -674,12 +722,40 @@ export default function ShiftDashboard() {
       <section className="shift-layout shift-layout--bottom">
         <section className="shift-panel">
           <div className="shift-panel__header">
+            <h2>Организации</h2>
+            <button className="ui-button ui-button--outline ui-button--sm" type="button" onClick={resetOrganizationForm}>Новая</button>
+          </div>
+          <form className="shift-form-grid" onSubmit={(event) => handleAction(saveOrganization(event))}>
+            <label>Название
+              <input className="ui-input" required maxLength={120} value={organizationForm.name} onChange={(event) => setOrganizationForm((form) => ({ ...form, name: event.target.value }))} />
+            </label>
+            <label>Алиасы через запятую
+              <input className="ui-input" value={organizationForm.aliases} placeholder="к" onChange={(event) => setOrganizationForm((form) => ({ ...form, aliases: event.target.value }))} />
+            </label>
+            <label className="shift-form-grid__wide">Лист смен в Excel
+              <input className="ui-input" required maxLength={31} list="organization-sheets" value={organizationForm.excelSheet} onChange={(event) => setOrganizationForm((form) => ({ ...form, excelSheet: event.target.value }))} />
+              <datalist id="organization-sheets">{Array.from(new Set(organizations.map((org) => org.excelSheet))).map((sheet) => <option key={sheet} value={sheet} />)}</datalist>
+            </label>
+            <label>Активна
+              <input type="checkbox" checked={organizationForm.isActive} onChange={(event) => setOrganizationForm((form) => ({ ...form, isActive: event.target.checked }))} />
+            </label>
+            <button className="ui-button ui-button--default" type="submit">Сохранить организацию</button>
+          </form>
+          <p className="shift-empty">Одинаковый лист объединяет смены организаций. Новая организация получает копию тарифов Фокуса.</p>
+          <div className="shift-chip-list">
+            {organizations.map((org) => <button className="shift-chip" key={org.id} type="button" onClick={() => setOrganizationForm({ ...org, aliases: org.aliases.join(", ") })}>
+              {org.name} → {org.excelSheet}{org.isActive ? "" : " (отключена)"}
+            </button>)}
+          </div>
+        </section>
+        <section className="shift-panel">
+          <div className="shift-panel__header">
             <h2>Сотрудники</h2>
             <button className="ui-button ui-button--outline ui-button--sm" type="button" onClick={() => setEmployeeForm(createEmployeeForm())}>
               Новый
             </button>
           </div>
-          <form className="shift-form-grid" onSubmit={saveEmployee}>
+          <form className="shift-form-grid" onSubmit={(event) => handleAction(saveEmployee(event))}>
             <label>
               Имя
               <input className="ui-input" required value={employeeForm.shortName} onChange={(event) => setEmployeeForm((form) => ({ ...form, shortName: event.target.value }))} />
@@ -718,7 +794,14 @@ export default function ShiftDashboard() {
               Новая
             </button>
           </div>
-          <form className="shift-form-grid" onSubmit={savePayRule}>
+          <form className="shift-form-grid" onSubmit={(event) => handleAction(savePayRule(event))}>
+            {workTypes.some((type) => type.value === payRuleForm.code) ? <label className="shift-form-grid__wide">Организация тарифа
+              <select className="ui-select" required={!payRuleForm.allowGlobal} value={payRuleForm.organizationId}
+                onChange={(event) => setPayRuleForm((form) => ({ ...form, organizationId: event.target.value }))}>
+                <option value="">{payRuleForm.allowGlobal ? "Общий — для старых записей" : "Выберите организацию"}</option>
+                {organizations.filter((org) => org.isActive || String(org.id) === payRuleForm.organizationId).map((org) => <option key={org.id} value={org.id}>{org.name}</option>)}
+              </select>
+            </label> : <p className="shift-form-grid__wide shift-empty">Общий тариф для всех организаций.</p>}
             <label>
               Код
               <select className="ui-select" value={payRuleForm.code} onChange={(event) => setPayRuleForm((form) => ({ ...form, code: event.target.value }))}>
@@ -759,12 +842,18 @@ export default function ShiftDashboard() {
               С даты
               <input className="ui-input" type="date" required value={payRuleForm.activeFrom} onChange={(event) => setPayRuleForm((form) => ({ ...form, activeFrom: event.target.value }))} />
             </label>
+            <label>По дату включительно
+              <input className="ui-input" type="date" value={payRuleForm.activeTo} onChange={(event) => setPayRuleForm((form) => ({ ...form, activeTo: event.target.value }))} />
+            </label>
+            <label>Активен
+              <input type="checkbox" checked={payRuleForm.isActive} onChange={(event) => setPayRuleForm((form) => ({ ...form, isActive: event.target.checked }))} />
+            </label>
             <button className="ui-button ui-button--default" type="submit">Сохранить правило</button>
           </form>
           <div className="shift-chip-list">
             {payRules.map((rule) => (
               <button className="shift-chip" key={rule.id} type="button" onClick={() => editPayRule(rule)}>
-                {rule.title}: {rule.hourlyRate ? `${rule.hourlyRate}/ч` : rule.fixedAmount}
+                {organizations.find((org) => org.id === rule.organizationId)?.name ?? "Общий"} · {rule.title}: {rule.hourlyRate ? `${rule.hourlyRate}/ч` : rule.fixedAmount} · с {rule.activeFrom}{rule.isActive ? "" : " (отключён)"}
               </button>
             ))}
           </div>

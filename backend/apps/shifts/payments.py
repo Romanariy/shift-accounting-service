@@ -15,11 +15,11 @@ def money(value):
     return Decimal(value or 0).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
-def get_active_rule(code, target_date):
+def get_active_rule(code, target_date, organization_id=None):
     return (
-        PayRule.objects.filter(code=code, is_active=True, active_from__lte=target_date)
+        PayRule.objects.filter(code=code, organization_id=organization_id, is_active=True, active_from__lte=target_date)
         .filter(Q(active_to__isnull=True) | Q(active_to__gte=target_date))
-        .order_by("-active_from", "-updated_at")
+        .order_by("-active_from", "-updated_at", "-pk")
         .first()
     )
 
@@ -45,8 +45,11 @@ def calculate_by_rule(rule, hours=ZERO, units=1):
     return money(rule.fixed_amount)
 
 
-def calculate_shift_amount(work_type, hours, target_date):
-    return calculate_by_rule(get_active_rule(work_type, target_date), hours=hours)
+def calculate_shift_amount(work_type, hours, target_date, organization_id=None):
+    rule = get_active_rule(work_type, target_date, organization_id)
+    if rule is None:
+        raise ValueError("Нет действующего тарифа для организации, типа работы и даты смены.")
+    return calculate_by_rule(rule, hours=hours)
 
 
 def calculate_companion_amount(count, target_date):

@@ -3,22 +3,26 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 
+from django.utils import timezone
+
 from .constants import WorkType
 
 
-DATE_RE = re.compile(r"(?P<day>\d{1,2})[.](?P<month>\d{1,2})(?:[.](?P<year>\d{2,4}))?")
+DATE_RE = re.compile(r"(?P<day>\d{1,2})[.](?P<month>\d{1,2})(?:[.](?P<year>\d{2}|\d{4}))?(?=$|[\s,;])")
 TIME_RANGE_RE = re.compile(
-    r"(?P<start_hour>\d{1,2})[:.](?P<start_minute>\d{2})\s*[-–—]\s*"
-    r"(?P<end_hour>\d{1,2})[:.](?P<end_minute>\d{2})"
+    r"(?<![\d:.])(?P<start_hour>\d{1,2})[:.](?P<start_minute>\d{2})\s*[-–—]\s*"
+    r"(?P<end_hour>\d{1,2})[:.](?P<end_minute>\d{2})(?![\d:.])"
 )
 COMPANION_RE = re.compile(
-    r"\+\s*(?P<count>\d+)\s*(?:сопр|сопровождени[еяй]?|сопровождения?)\.?",
+    r"\+\s*(?P<count>\d+)\s*(?:сопровождени[еяй]|сопр)(?!\w)\.?",
     re.IGNORECASE,
 )
 
 
 @dataclass(frozen=True)
 class ParsedMessage:
+    organization_id: int
+    has_shift: bool
     date: date
     employee_hint: str
     work_type: str
@@ -93,21 +97,40 @@ def remove_known_work_word(text, patterns):
     return normalize_text(result)
 
 
-def parse_shift_message(text, aliases=(), default_year=None):
-    default_year = int(default_year or date.today().year)
+def parse_shift_message(text, aliases=(), default_year=None, organizations=(), today=None):
+    today = today or timezone.localdate()
+    default_year = int(default_year or today.year)
     source = normalize_text(text)
 
     if not source:
         raise ParseError("Пустое сообщение.")
 
+    source = source.rstrip(" .")
+    candidates = sorted(
+        [(normalize_text(alias), org.id) for org in organizations for alias in [org.name, *org.aliases]],
+        key=lambda item: len(item[0]), reverse=True,
+    )
+    organization_id = None
+    for alias, org_id in candidates:
+        match = re.search(rf"(?<!\S){re.escape(alias)}$", source, re.IGNORECASE)
+        if match:
+            organization_id = org_id
+            source = source[:match.start()].strip()
+            break
+    if organization_id is None:
+        raise ParseError("В конце укажите организацию или её алиас, например: 10:00-16:00 фокус.")
+
     employee_hint, remaining = consume_employee_hint(source, aliases)
-    date_match = DATE_RE.match(remaining)
-
-    if not date_match:
-        raise ParseError("Сообщение должно начинаться с даты в формате 01.04.")
-
-    parsed_date = make_date(date_match, default_year)
-    remaining = strip_wrapping_punctuation(remaining[date_match.end() :])
+    date_match = None if TIME_RANGE_RE.match(remaining) else DATE_RE.match(remaining)
+    parsed_date = today
+    if date_match:
+        try:
+            parsed_date = make_date(date_match, default_year)
+        except ValueError as error:
+            raise ParseError("Некорректная дата смены.") from error
+        remaining = strip_wrapping_punctuation(remaining[date_match.end() :])
+    elif re.match(r"^\d+[./]\d+", remaining) and not TIME_RANGE_RE.match(remaining):
+        raise ParseError("Некорректная дата или время. Пример: 01.04 10:00-16:00 фокус.")
 
     if not employee_hint:
         employee_hint, remaining = consume_employee_hint(remaining, aliases)
@@ -122,38 +145,51 @@ def parse_shift_message(text, aliases=(), default_year=None):
     companion_match = COMPANION_RE.search(remaining)
     if companion_match:
         companion_count = int(companion_match.group("count"))
+        if companion_count <= 0 or len(COMPANION_RE.findall(remaining)) > 1:
+            raise ParseError("Укажите одно положительное количество сопровождений.")
         remaining = normalize_text(COMPANION_RE.sub(" ", remaining))
+    if re.search(r"\+\s*[+-]?\d+\s*сопр", remaining, re.IGNORECASE):
+        raise ParseError("Укажите положительное количество сопровождений: + 2 сопр.")
 
     start_time = None
     end_time = None
     hours = Decimal("0.00")
     time_match = TIME_RANGE_RE.search(remaining)
     if time_match:
-        start_time = time(
-            int(time_match.group("start_hour")),
-            int(time_match.group("start_minute")),
-        )
-        end_time = time(
-            int(time_match.group("end_hour")),
-            int(time_match.group("end_minute")),
-        )
+        try:
+            start_time = time(int(time_match.group("start_hour")), int(time_match.group("start_minute")))
+            end_time = time(int(time_match.group("end_hour")), int(time_match.group("end_minute")))
+        except ValueError as error:
+            raise ParseError("Некорректное время смены.") from error
         hours = calculate_hours(start_time, end_time)
         remaining = normalize_text(TIME_RANGE_RE.sub(" ", remaining, count=1))
 
     normalized_remaining = remaining.lower()
     work_type = WorkType.DEFAULT_SHIFT
 
-    if "фотобар" in normalized_remaining:
-        work_type = WorkType.PHOTOBAR
-        remaining = remove_known_work_word(remaining, (r"фотобар",))
-    elif "покраск" in normalized_remaining and "циклорам" in normalized_remaining:
+    if "покраск" in normalized_remaining and "циклорам" in normalized_remaining:
         work_type = WorkType.CYCLORAMA_PAINTING
         remaining = remove_known_work_word(remaining, (r"покраск\w*", r"циклорам\w*"))
     elif "уборк" in normalized_remaining:
         work_type = WorkType.CLEANING
         remaining = remove_known_work_word(remaining, (r"уборк\w*",))
+    else:
+        for pattern, role in ((r"\bбольшой\s+админ\b", WorkType.BIG_ADMIN),
+                              (r"\bмалый\s+админ\b", WorkType.SMALL_ADMIN)):
+            if re.search(pattern, normalized_remaining):
+                work_type = role
+                remaining = remove_known_work_word(remaining, (pattern,))
+                break
+
+    if re.search(r"\d+:\d+|\d+[.]\d+\s*[-–—]|\d+\s*[-–—]\s*\d+[:.]", remaining):
+        raise ParseError("Укажите один корректный интервал времени, например 10:00-16:00.")
+    has_shift = time_match is not None or work_type != WorkType.DEFAULT_SHIFT
+    if not has_shift and not companion_count:
+        raise ParseError("Укажите время смены, уборку, покраску циклораммы или + N сопр перед организацией.")
 
     return ParsedMessage(
+        organization_id=organization_id,
+        has_shift=has_shift,
         date=parsed_date,
         employee_hint=employee_hint,
         work_type=work_type,

@@ -1,15 +1,19 @@
 import json
 from datetime import date, datetime, time
 from decimal import Decimal
+from functools import wraps
+from django.core.exceptions import ValidationError
+from django.db import transaction, IntegrityError
 
 from django.http import Http404, HttpResponse, JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
 from .audit import log_change
-from .constants import EntrySource, EntryStatus, SyncStatus
+from .constants import EntrySource, EntryStatus, SyncStatus, WORK_TYPE_CHOICES
 from .ingest import ingest_telegram_message
-from .models import AuditLog, CompanionEntry, Employee, PayRule, ShiftEntry, SyncOutbox
+from .models import AuditLog, CompanionEntry, Employee, Organization, PayRule, ShiftEntry, SyncOutbox
+from .organizations import copy_initial_rates
 from .parser import ParseError, calculate_hours
 from .payments import calculate_companion_amount, calculate_shift_amount
 from .reports import build_month_summary, generate_month_report
@@ -19,6 +23,7 @@ from .serializers import (
     employee_to_dict,
     pay_rule_to_dict,
     shift_to_dict,
+    organization_to_dict,
 )
 from .sync import queue_sync_change, try_sync_once
 
@@ -32,6 +37,68 @@ def json_body(request):
 
 def api_error(message, status=400):
     return JsonResponse({"error": message}, status=status, json_dumps_params={"ensure_ascii": False})
+
+
+def validated_api(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        try:
+            with transaction.atomic():
+                return view(*args, **kwargs)
+        except ValidationError as error:
+            return api_error(" ".join(error.messages))
+        except (ValueError, TypeError) as error:
+            return api_error(str(error))
+        except IntegrityError:
+            return api_error("Запись конфликтует с существующими данными.")
+    return wrapped
+
+
+def resolve_organization(value, current_id=None, allow_empty=False):
+    if value in (None, ""):
+        if allow_empty:
+            return None
+        raise ValueError("Укажите организацию.")
+    organization = Organization.objects.filter(pk=int(value)).first()
+    if organization is None or (not organization.is_active and organization.pk != current_id):
+        raise ValueError("Организация не найдена или отключена.")
+    return organization
+
+
+@csrf_exempt
+@validated_api
+def organizations_api(request, organization_id=None):
+    organization = None
+    if organization_id:
+        organization = Organization.objects.filter(pk=organization_id).first()
+        if organization is None:
+            raise Http404
+    if request.method == "GET":
+        data = organization_to_dict(organization) if organization else {
+            "organizations": [organization_to_dict(org) for org in Organization.objects.all()]}
+        return JsonResponse(data, json_dumps_params={"ensure_ascii": False})
+    if request.method not in ("POST", "PUT", "DELETE") or (request.method != "POST" and not organization):
+        return api_error("Метод не поддерживается.", 405)
+    if request.method == "POST" and organization:
+        return api_error("Метод не поддерживается.", 405)
+    creating = organization is None
+    organization = organization or Organization()
+    before = organization_to_dict(organization) if not creating else None
+    if request.method == "DELETE":
+        organization.is_active = False
+    else:
+        payload = json_body(request)
+        organization.name = payload.get("name", organization.name)
+        organization.aliases = payload.get("aliases", organization.aliases)
+        organization.excel_sheet = payload.get("excelSheet", organization.excel_sheet)
+        organization.is_active = bool(payload.get("isActive", organization.is_active))
+    organization.full_clean()
+    organization.save()
+    if creating:
+        copy_initial_rates(organization)
+    after = organization_to_dict(organization)
+    log_change("organization", organization.pk, "create" if creating else "update", actor="web", before=before, after=after)
+    return JsonResponse(after, status=201 if creating else 200, json_dumps_params={"ensure_ascii": False})
 
 
 def parse_date(value, field="date"):
@@ -106,11 +173,13 @@ def update_employee_from_payload(employee, payload):
     employee.default_work_type = payload.get("defaultWorkType", employee.default_work_type)
     employee.is_active = bool(payload.get("isActive", employee.is_active))
     employee.sort_order = int(payload.get("sortOrder", employee.sort_order))
+    employee.full_clean()
     employee.save()
     return employee
 
 
 def update_pay_rule_from_payload(rule, payload):
+    existing_id = rule.organization_id
     rule.code = payload.get("code", rule.code)
     rule.title = payload.get("title", rule.title).strip()
     rule.calculation_type = payload.get("calculationType", rule.calculation_type)
@@ -121,6 +190,14 @@ def update_pay_rule_from_payload(rule, payload):
     rule.active_from = parse_date(payload.get("activeFrom"), "activeFrom")
     rule.active_to = parse_optional_date(payload.get("activeTo"))
     rule.is_active = bool(payload.get("isActive", rule.is_active))
+    if rule.code in dict(WORK_TYPE_CHOICES):
+        rule.organization = resolve_organization(payload.get("organizationId", existing_id), existing_id,
+                                                  allow_empty=bool(rule.pk and existing_id is None))
+    else:
+        if payload.get("organizationId"):
+            raise ValueError("Сопровождения и телефоны используют общие тарифы.")
+        rule.organization = None
+    rule.full_clean()
     rule.save()
     return rule
 
@@ -133,6 +210,8 @@ def resolve_employee(payload):
 
 
 def fill_common_entry(entry, payload, employee):
+    entry.organization = resolve_organization(payload.get("organizationId", entry.organization_id),
+        entry.organization_id, allow_empty=bool(entry.pk and entry.organization_id is None))
     entry.date = parse_date(payload.get("date"))
     entry.employee = employee
     entry.employee_name_snapshot = employee.display_name if employee else payload.get("employeeName", "")
@@ -147,6 +226,8 @@ def update_shift_from_payload(entry, payload):
     employee = resolve_employee(payload)
     fill_common_entry(entry, payload, employee)
     entry.work_type = payload.get("workType") or (employee.default_work_type if employee else "")
+    if entry.work_type not in dict(WORK_TYPE_CHOICES):
+        raise ValueError("Неизвестный тип работы.")
     entry.start_time = parse_time(payload.get("startTime"))
     entry.end_time = parse_time(payload.get("endTime"))
 
@@ -157,7 +238,7 @@ def update_shift_from_payload(entry, payload):
     else:
         entry.hours = Decimal("0.00")
 
-    entry.calculated_amount = calculate_shift_amount(entry.work_type, entry.hours, entry.date)
+    entry.calculated_amount = calculate_shift_amount(entry.work_type, entry.hours, entry.date, entry.organization_id)
     entry.save()
     return entry
 
@@ -173,10 +254,11 @@ def update_companion_from_payload(entry, payload):
 
 def queue_after_write(entity_type, entry, action, payload):
     queue_sync_change(entity_type, entry.id, action, payload)
-    try_sync_once(limit=10)
+    transaction.on_commit(lambda: try_sync_once(limit=10))
 
 
 @csrf_exempt
+@validated_api
 def employees_api(request, employee_id=None):
     if request.method == "GET":
         if employee_id:
@@ -220,6 +302,7 @@ def employees_api(request, employee_id=None):
 
 
 @csrf_exempt
+@validated_api
 def pay_rules_api(request, rule_id=None):
     if request.method == "GET":
         if rule_id:
@@ -263,14 +346,15 @@ def pay_rules_api(request, rule_id=None):
 
 
 @csrf_exempt
+@validated_api
 def entries_api(request):
     if request.method == "GET":
         shifts = apply_entry_filters(
-            ShiftEntry.objects.select_related("employee").order_by("-date", "-created_at"),
+            ShiftEntry.objects.select_related("employee", "organization").order_by("-date", "-created_at"),
             request,
         )
         companions = apply_entry_filters(
-            CompanionEntry.objects.select_related("employee").order_by("-date", "-created_at"),
+            CompanionEntry.objects.select_related("employee", "organization").order_by("-date", "-created_at"),
             request,
         )
         work_type = request.GET.get("workType")
@@ -309,6 +393,7 @@ def entries_api(request):
 
 
 @csrf_exempt
+@validated_api
 def entry_detail_api(request, kind, entry_id):
     model = CompanionEntry if kind == "companion" else ShiftEntry
     serializer = companion_to_dict if kind == "companion" else shift_to_dict

@@ -4,7 +4,7 @@ from decimal import Decimal
 from django.db.models import Sum
 
 from .constants import WorkType
-from .models import CompanionEntry, Employee, ShiftEntry
+from .models import CompanionEntry, Employee, Organization, ShiftEntry
 from .payments import calculate_phone_amount, iter_month_dates
 
 
@@ -13,22 +13,24 @@ def format_money(value):
 
 
 def append_totals(ws, start_row, amount_column, employees):
-    total_row = ws.max_row + 2
+    last_data_row = ws.max_row
+    total_row = last_data_row + 2
     ws.cell(row=total_row, column=1, value="Итоги")
     ws.cell(row=total_row + 1, column=1, value="Общая сумма за месяц")
     ws.cell(
         row=total_row + 1,
         column=2,
-        value=f"=SUM({amount_column}{start_row}:{amount_column}{ws.max_row})",
+        value=f"=SUM({amount_column}{start_row}:{amount_column}{last_data_row})" if last_data_row >= start_row else "=0",
     )
 
     row = total_row + 2
     for employee in employees:
+        criteria = employee.short_name.replace('~', '~~').replace('*', '~*').replace('?', '~?').replace('"', '""')
         ws.cell(row=row, column=1, value=employee.short_name)
         ws.cell(
             row=row,
             column=2,
-            value=f'=SUMIF(C{start_row}:C{total_row - 1},"{employee.short_name}",{amount_column}{start_row}:{amount_column}{total_row - 1})',
+            value=f'=SUMIF(C{start_row}:C{last_data_row},"{criteria}",{amount_column}{start_row}:{amount_column}{last_data_row})' if last_data_row >= start_row else "=0",
         )
         row += 1
 
@@ -61,43 +63,36 @@ def generate_month_report(year, month):
     start_date = month_dates[0]
     end_date = month_dates[-1]
 
-    shifts_by_date = {}
+    groups = {org.excel_sheet: {} for org in Organization.objects.filter(is_active=True)}
     shifts = (
         ShiftEntry.objects.filter(date__range=(start_date, end_date), deleted_at__isnull=True)
-        .select_related("employee")
+        .select_related("employee", "organization")
         .order_by("date", "created_at")
     )
     for shift in shifts:
-        shifts_by_date.setdefault(shift.date, []).append(shift)
-
-    ws = wb.active
-    ws.title = "Смены"
-    ws.append(["Дата смены", "Кол-во часов", "Кто", "Роль", "Комментарий", "Сумма за день"])
-    for current_date in month_dates:
-        day_shifts = shifts_by_date.get(current_date)
-        if not day_shifts:
-            ws.append([current_date, 0, "Без админа", "", "", 0])
-            continue
-
-        for shift in day_shifts:
-            ws.append(
-                [
-                    shift.date,
-                    format_money(shift.hours),
-                    shift.employee_name_snapshot,
-                    shift.get_work_type_display(),
-                    shift.comment,
-                    format_money(shift.calculated_amount),
-                ]
-            )
-    append_totals(ws, 2, "F", employees)
-    style_sheet(ws, {"A": 14, "B": 14, "C": 18, "D": 24, "E": 34, "F": 16})
+        sheet_name = shift.organization.excel_sheet if shift.organization_id else "Без организации"
+        groups.setdefault(sheet_name, {}).setdefault(shift.date, []).append(shift)
+    wb.remove(wb.active)
+    for sheet_name, shifts_by_date in groups.items():
+        ws = wb.create_sheet(sheet_name)
+        ws.append(["Дата смены", "Кол-во часов", "Кто", "Роль", "Комментарий", "Сумма за день", "Организация"])
+        for current_date in month_dates:
+            day_shifts = shifts_by_date.get(current_date)
+            if not day_shifts:
+                ws.append([current_date, 0, "Без админа", "", "", 0, ""])
+                continue
+            for shift in day_shifts:
+                ws.append([shift.date, format_money(shift.hours), shift.employee_name_snapshot,
+                           shift.get_work_type_display(), shift.comment, format_money(shift.calculated_amount),
+                           shift.organization.name if shift.organization_id else "Без организации"])
+        append_totals(ws, 2, "F", employees)
+        style_sheet(ws, {"A": 14, "B": 14, "C": 18, "D": 24, "E": 34, "F": 16, "G": 24})
 
     companion_ws = wb.create_sheet("Сопровождения")
-    companion_ws.append(["Дата", "Кол-во сопровождений", "Кто", "Сумма"])
+    companion_ws.append(["Дата", "Кол-во сопровождений", "Кто", "Сумма", "Организация"])
     companions = (
         CompanionEntry.objects.filter(date__range=(start_date, end_date), deleted_at__isnull=True)
-        .select_related("employee")
+        .select_related("employee", "organization")
         .order_by("date", "created_at")
     )
     for companion in companions:
@@ -107,10 +102,11 @@ def generate_month_report(year, month):
                 companion.count,
                 companion.employee_name_snapshot,
                 format_money(companion.calculated_amount),
+                companion.organization.name if companion.organization_id else "Без организации",
             ]
         )
     append_totals(companion_ws, 2, "D", employees)
-    style_sheet(companion_ws, {"A": 14, "B": 24, "C": 18, "D": 16})
+    style_sheet(companion_ws, {"A": 14, "B": 24, "C": 18, "D": 16, "E": 24})
 
     phone_ws = wb.create_sheet("Телефоны")
     phone_ws.append(["Дата", "Сумма"])

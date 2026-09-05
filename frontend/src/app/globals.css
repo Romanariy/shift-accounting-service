@@ -177,7 +177,7 @@ select {
 }
 
 .shift-layout--bottom {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .shift-panel {
@@ -231,10 +231,10 @@ select {
 .shift-table__head,
 .shift-table__row {
   display: grid;
-  grid-template-columns: 104px minmax(100px, 1fr) minmax(120px, 1fr) 92px 96px minmax(240px, 1.2fr);
+  grid-template-columns: 104px minmax(100px, 1fr) minmax(110px, 1fr) minmax(120px, 1fr) 92px 96px minmax(240px, 1.2fr);
   gap: 10px;
   align-items: center;
-  min-width: 880px;
+  min-width: 1000px;
 }
 
 .shift-table__head {

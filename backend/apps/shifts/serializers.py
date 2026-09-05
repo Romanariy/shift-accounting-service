@@ -45,9 +45,15 @@ def employee_to_dict(employee: Employee):
     }
 
 
+def organization_to_dict(organization):
+    return {"id": organization.id, "name": organization.name, "aliases": organization.aliases,
+            "excelSheet": organization.excel_sheet, "isActive": organization.is_active}
+
+
 def pay_rule_to_dict(rule: PayRule):
     return {
         "id": rule.id,
+        "organizationId": rule.organization_id,
         "code": rule.code,
         "title": rule.title,
         "calculationType": rule.calculation_type,
@@ -66,6 +72,8 @@ def pay_rule_to_dict(rule: PayRule):
 def shift_to_dict(entry: ShiftEntry):
     return {
         "kind": "shift",
+        "organizationId": entry.organization_id,
+        "organizationName": entry.organization.name if entry.organization_id else "",
         "id": entry.id,
         "date": date_to_string(entry.date),
         "employeeId": entry.employee_id,
@@ -92,6 +100,8 @@ def shift_to_dict(entry: ShiftEntry):
 def companion_to_dict(entry: CompanionEntry):
     return {
         "kind": "companion",
+        "organizationId": entry.organization_id,
+        "organizationName": entry.organization.name if entry.organization_id else "",
         "id": entry.id,
         "date": date_to_string(entry.date),
         "employeeId": entry.employee_id,
@@ -123,4 +133,3 @@ def audit_to_dict(entry: AuditLog):
         "after": entry.after,
         "createdAt": datetime_to_string(entry.created_at),
     }
-
