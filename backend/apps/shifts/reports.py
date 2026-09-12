@@ -179,12 +179,21 @@ def build_month_summary(year, month):
             }
         )
 
+    # New work without a legacy counterpart participates in the existing employee summary.
+    from apps.ledger.models import Record
+    additional = Record.objects.filter(deleted_at=None, legacy_id=None, date__range=(start_date, end_date)).exclude(kind="expense").exclude(service__legacy_code="phone")
+    added_total = additional.aggregate(total=Sum("amount"))["total"] or 0
+    for row in rows:
+        extra = additional.filter(employee_id=row["employeeId"]).aggregate(total=Sum("amount"))["total"] or 0
+        row["additionalAmount"] = str(extra)
+        row["totalAmount"] = str(Decimal(row["totalAmount"]) + Decimal(extra))
     return {
         "year": year,
         "month": month,
         "shiftTotal": str(shift_total),
         "companionTotal": str(companion_total),
         "phoneTotal": str(phone_total),
-        "grandTotal": str(Decimal(shift_total) + Decimal(companion_total) + Decimal(phone_total)),
+        "additionalTotal": str(added_total),
+        "grandTotal": str(Decimal(shift_total) + Decimal(companion_total) + Decimal(phone_total) + Decimal(added_total)),
         "employees": rows,
     }

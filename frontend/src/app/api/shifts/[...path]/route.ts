@@ -12,6 +12,10 @@ type RouteContext = {
 };
 
 async function proxyRequest(request: NextRequest, context: RouteContext) {
+  const origin = request.headers.get("origin");
+  if (!["GET", "HEAD"].includes(request.method) && origin && new URL(origin).host !== request.headers.get("host")) {
+    return NextResponse.json({ error: "Запрос с другого сайта отклонён." }, { status: 403 });
+  }
   const { path = [] } = await context.params;
   const apiPath = path.join("/");
   const search = request.nextUrl.search;
@@ -73,4 +77,3 @@ export function PUT(request: NextRequest, context: RouteContext) {
 export function DELETE(request: NextRequest, context: RouteContext) {
   return proxyRequest(request, context);
 }
-

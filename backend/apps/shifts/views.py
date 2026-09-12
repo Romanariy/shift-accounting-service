@@ -238,7 +238,9 @@ def update_shift_from_payload(entry, payload):
     else:
         entry.hours = Decimal("0.00")
 
-    entry.calculated_amount = calculate_shift_amount(entry.work_type, entry.hours, entry.date, entry.organization_id)
+    from apps.ledger.bridge import ready
+    if not entry.pk or not ready():
+        entry.calculated_amount = calculate_shift_amount(entry.work_type, entry.hours, entry.date, entry.organization_id)
     entry.save()
     return entry
 
@@ -247,7 +249,9 @@ def update_companion_from_payload(entry, payload):
     employee = resolve_employee(payload)
     fill_common_entry(entry, payload, employee)
     entry.count = max(1, int_or_zero(payload.get("count", 1)))
-    entry.calculated_amount = calculate_companion_amount(entry.count, entry.date)
+    from apps.ledger.bridge import ready
+    if not entry.pk or not ready():
+        entry.calculated_amount = calculate_companion_amount(entry.count, entry.date)
     entry.save()
     return entry
 
@@ -445,7 +449,7 @@ def telegram_ingest_api(request):
             message_id=payload.get("messageId"),
             default_year=payload.get("year"),
         )
-    except ParseError as error:
+    except (ParseError, ValidationError) as error:
         return api_error(str(error))
     return JsonResponse(
         {

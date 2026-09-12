@@ -1,7 +1,7 @@
 import re
 
 from django.core.exceptions import ValidationError
-from django.db import models
+from django.db import models, transaction
 
 from .constants import (
     CALCULATION_TYPE_CHOICES,
@@ -227,6 +227,7 @@ class ShiftEntry(EntryBase):
         employee = self.employee_name_snapshot or "Без сотрудника"
         return f"{self.date:%d.%m.%Y} {employee} {self.get_work_type_display()}"
 
+    @transaction.atomic
     def save(self, *args, **kwargs):
         self.fill_employee_snapshot()
         super().save(*args, **kwargs)
@@ -248,6 +249,7 @@ class CompanionEntry(EntryBase):
         employee = self.employee_name_snapshot or "Без сотрудника"
         return f"{self.date:%d.%m.%Y} {employee}: {self.count}"
 
+    @transaction.atomic
     def save(self, *args, **kwargs):
         self.fill_employee_snapshot()
         super().save(*args, **kwargs)

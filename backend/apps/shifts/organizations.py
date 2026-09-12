@@ -18,3 +18,9 @@ def copy_initial_rates(organization):
             rules = [{**seed, "active_from": date(2026, 1, 1)}]
         for values in rules:
             PayRule.objects.create(organization=organization, **values)
+    from django.db import connection
+    if focus and "ledger_rate" in connection.introspection.table_names():
+        from apps.ledger.models import Rate
+        for rate in Rate.objects.filter(organization=focus):
+            values = {field: getattr(rate, field) for field in ("service_id", "calculation", "price", "minimum", "maximum", "start", "end", "active")}
+            Rate.objects.create(organization=organization, **values)

@@ -8,6 +8,7 @@ def healthcheck(_request):
 
 
 urlpatterns = [
+    path("api/shifts/ledger/", include("apps.ledger.urls")),
     path("", healthcheck),
     path("admin/", admin.site.urls),
     path("api/", include("apps.shifts.urls")),
@@ -16,4 +17,3 @@ urlpatterns = [
 admin.site.site_header = "Shift Accounting Admin"
 admin.site.site_title = "Shift Accounting"
 admin.site.index_title = "Учет смен и отчетов"
-

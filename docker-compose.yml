@@ -64,6 +64,7 @@ services:
     env_file: .env
     environment:
       DJANGO_API_BASE_URL: ${DJANGO_API_BASE_URL:-http://backend:8000}
+      SITE_URL: ${SITE_URL:-http://localhost:3000}
       NODE_ENV: production
     depends_on:
       backend:
@@ -104,6 +105,26 @@ services:
       DJANGO_DB_HOST: db
       DJANGO_DB_PORT: 5432
     command: python manage.py run_shift_bot
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  billing:
+    image: shift-accounting-backend:latest
+    build:
+      context: ./backend
+    profiles:
+      - bot
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DJANGO_DB_ENGINE: django.db.backends.postgresql
+      DJANGO_DB_NAME: ${POSTGRES_DB:-shift_accounting}
+      DJANGO_DB_USER: ${POSTGRES_USER:-shift_accounting}
+      DJANGO_DB_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+      DJANGO_DB_HOST: db
+      DJANGO_DB_PORT: 5432
+    command: python manage.py run_billing_worker
     depends_on:
       migrate:
         condition: service_completed_successfully

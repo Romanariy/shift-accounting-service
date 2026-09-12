@@ -1,8 +1,7 @@
-import ShiftDashboard from "../components/shifts/ShiftDashboard";
+import AccountingApp from "../components/AccountingApp";
 
 export const dynamic = "force-dynamic";
 
 export default function HomePage() {
-  return <ShiftDashboard />;
+  return <AccountingApp />;
 }
-
