@@ -1,0 +1,3 @@
+{"probe":"service_form_defaults","amount":"","amountRequired":false,"selectedMonth":"2026-04","newRecordDate":"2026-09-12"}
+{"probe":"successful_write_failed_reload","writes":1,"formRemainsOpen":true,"errorVisible":true}
+{"probe":"retry_after_failed_reload","writes":2,"identicalPayloads":true}

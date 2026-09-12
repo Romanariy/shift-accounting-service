@@ -1,0 +1,15 @@
+{"probe": "service_form_blank_amount", "status": 400, "body": {"error": "Некорректная сумма."}}
+{"probe": "service_form_amount_omitted_control", "status": 200, "amount": "800.00"}
+{"probe": "fractional_companion", "status": 200, "units": "1.50", "ledger_amount": "750.00", "legacy_count": 1}
+{"probe": "negative_ready_amount", "status": 200, "amount": "-500.00", "review": false}
+{"probe": "lost_update", "status": 200, "expected_preserved_amount": "200.00", "actual": "100.00"}
+{"probe": "change_service_input_with_hourly_rates", "status": 200, "input_type": "quantity", "existing_calculations": ["hourly", "hourly", "hourly"]}
+{"probe": "malformed_json_shapes", "payload": [], "status": 500, "error_type": "AttributeError"}
+{"probe": "malformed_json_shapes", "payload": null, "status": 500, "error_type": "AttributeError"}
+{"probe": "malformed_json_shapes", "payload": {"description": null}, "status": 400, "error_type": null}
+{"probe": "invalid_rate_foreign_key", "status": 404, "body": {"error": "Запись не найдена."}}
+{"probe": "delete_middle_invoice_version", "exception": "ValidationError", "message": "['За этот период уже подтвердили другой счёт. Создайте новую версию.']", "remaining_chain": [{"id": 1, "replaces_id": null}, {"id": 3, "replaces_id": null}, {"id": 4, "replaces_id": 3}]}
+{"probe": "admin_bypasses_engine", "original_amount": "800.00", "units": 8, "amount": "800.00", "group_hours": "4.00", "record_audit_events_added": 0}
+{"probe": "journal_query_count", "status": 200, "rows": 50, "sql_queries": 105, "response_bytes": 239053}
+{"probe": "employee_name_split", "totals": [{"employee_id": 1, "employee_name": "Audit renamed employee", "total": "100"}, {"employee_id": 1, "employee_name": "Рамис", "total": "100"}]}
+{"probe": "legacy_excel_formula", "cells": [{"sheet": "Фокус и Фотобар", "cell": "E13", "type": "f", "value": "=1+1"}]}
