@@ -214,6 +214,64 @@ class LedgerTests(TestCase):
         with self.assertRaises(ValidationError):
             recalculate(self.day, self.day, preview["fingerprint"])
 
+    def test_recalc_repairs_phone_accruals_with_archived_global_history(self):
+        phone = Service.objects.get(legacy_code="phone")
+        tomorrow = self.day + timedelta(days=1)
+        Rate.objects.filter(service=phone).delete()
+        for org in (self.focus, self.other):
+            Accrual.objects.create(service=phone, organization=org, start=self.day)
+        accrue(tomorrow)
+        rows = Record.objects.filter(service=phone, source="auto")
+        self.assertEqual(rows.count(), 4)
+        self.assertEqual(rows.filter(amount=0, review=True).count(), 4)
+        archive = Record.objects.create(kind="service", service=phone, date=self.day, amount=200,
+            source="import", review=True, description="Архив общего расчёта телефонов",
+            auto_key=f"legacy-phone:{self.day}")
+        Rate.objects.create(service=phone, organization=self.focus, calculation="fixed", price=100,
+                            start=self.day, end=self.day)
+        Rate.objects.create(service=phone, organization=self.focus, calculation="fixed", price=250,
+                            start=tomorrow)
+        Rate.objects.create(service=phone, organization=self.other, calculation="fixed", price=300,
+                            start=self.day)
+        endpoint = "/api/shifts/ledger/recalculate/"
+        payload = {"start": str(self.day), "end": str(tomorrow)}
+        response = self.client.post(endpoint, json.dumps(payload), content_type="application/json")
+        self.assertEqual(response.status_code, 200, response.content)
+        preview = response.json()
+        self.assertEqual(preview["errors"], [])
+        self.assertEqual(len(preview["changes"]), 4)
+        self.assertEqual(preview["skipped"][0]["reason"], "Архив общего расчёта телефонов")
+        self.assertEqual(rows.filter(amount=0).count(), 4)  # Preview does not write.
+        payload["fingerprint"] = preview["fingerprint"]
+        response = self.client.post(endpoint, json.dumps(payload), content_type="application/json")
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(rows.get(organization=self.focus, date=self.day).amount, 100)
+        self.assertEqual(rows.get(organization=self.focus, date=tomorrow).amount, 250)
+        self.assertEqual(list(rows.filter(organization=self.other).values_list("amount", flat=True)), [300, 300])
+        self.assertFalse(rows.filter(review=True).exists())
+        self.assertFalse(rows.exclude(error="").exists())
+        self.assertEqual(rows.count(), 4)
+        archive.refresh_from_db()
+        self.assertEqual(archive.amount, 200)
+        self.assertIsNone(archive.organization_id)
+        self.assertTrue(archive.review)
+        self.assertFalse(Delivery.objects.exists())
+        self.assertEqual(recalculate(self.day, tomorrow)["changes"], [])
+
+    def test_recalc_unassigned_history_does_not_hide_missing_current_tariff(self):
+        phone = Service.objects.get(legacy_code="phone")
+        archive = Record.objects.create(kind="service", service=phone, date=self.day, amount=200)
+        Rate.objects.filter(service=phone).delete()
+        Accrual.objects.create(service=phone, organization=self.focus, start=self.day)
+        accrue(self.day)
+        preview = recalculate(self.day, self.day)
+        self.assertEqual(preview["skipped"][0]["reason"], "Не назначена организация")
+        self.assertEqual(len(preview["errors"]), 1)
+        with self.assertRaisesMessage(ValidationError, "Сначала исправьте отсутствующие тарифы"):
+            recalculate(self.day, self.day, preview["fingerprint"])
+        archive.refresh_from_db()
+        self.assertEqual(archive.amount, 200)
+
     def test_api_bootstrap_crud_and_summary(self):
         self.assertEqual(self.client.get("/api/shifts/ledger/bootstrap/").status_code, 200)
         payload = {"kind": "oneoff", "organization": self.focus.pk, "employee": self.employee.pk,

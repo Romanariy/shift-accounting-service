@@ -241,6 +241,14 @@ def recalculate(start, end, fingerprint=None):
         grouped[key(row)].append(row)
     changes, errors, plans, previews, skipped = [], [], [], [], []
     for group_key, members in grouped.items():
+        if group_key[1] is None:
+            # Imported global phone history has no organization-specific tariff.
+            # Keep it intact without blocking recalculation of current accruals.
+            archived_phones = all((row.auto_key or "").startswith("legacy-phone:") for row in members)
+            skipped.append({"date": str(group_key[2]), "service": members[0].service.name,
+                            "organization": "Без организации",
+                            "reason": "Архив общего расчёта телефонов" if archived_phones else "Не назначена организация"})
+            continue
         if any(is_frozen(row) for row in members):
             skipped.append({"date": str(group_key[2]), "service": members[0].service.name, "organization": members[0].organization.name, "reason": "Есть запись в подтверждённом счёте"})
             continue
