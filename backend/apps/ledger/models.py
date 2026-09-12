@@ -118,6 +118,7 @@ class Settings(models.Model):
     # A singleton also serializes mutations and approval snapshots on PostgreSQL.
     id = models.PositiveSmallIntegerField(primary_key=True, default=1, editable=False)
     enabled = models.BooleanField(default=False)
+    earnings_enabled = models.BooleanField(default=True)
     approver = models.ForeignKey(TelegramContact, null=True, blank=True, on_delete=models.PROTECT)
     day = models.PositiveSmallIntegerField(default=1)
     hour = models.PositiveSmallIntegerField(default=10)
@@ -227,6 +228,20 @@ class Delivery(models.Model):
     recipient = models.BigIntegerField()
     version = models.PositiveIntegerField()
     key = models.CharField(max_length=160, unique=True)
+    state = models.CharField(max_length=16, default="pending")
+    attempts = models.PositiveIntegerField(default=0)
+    error = models.TextField(blank=True)
+    message_id = models.BigIntegerField(null=True, blank=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class EarningsDelivery(models.Model):
+    month = models.CharField(max_length=7, unique=True)
+    snapshot = models.JSONField(default=dict)
+    artifact = models.BinaryField(default=bytes)
+    recipient = models.BigIntegerField()
     state = models.CharField(max_length=16, default="pending")
     attempts = models.PositiveIntegerField(default=0)
     error = models.TextField(blank=True)

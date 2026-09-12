@@ -111,12 +111,16 @@ async function mountApp(t) {
     services: [{ id: 1, name: "Сопровождение", aliases: ["сопр"], active: true, input_type: "quantity", frequency: "entry" }],
     rates: Array.from({ length: 60 }, (_, i) => ({ id: i + 1, service: 1, organization: i < 30 ? 1 : 2, calculation: "fixed", price: 100, start: "2026-01-01", active: true })),
     organization_list: [{ id: 1, name: "Фокус", active: true }, { id: 2, name: "Студия", active: false }],
-    employees: [{ id: 1, name: "Рамис", active: true }], accruals: [], preferences: [], contacts: [], organizations: [], settings: {},
+    employees: [{ id: 1, name: "Рамис", active: true }], accruals: [], preferences: [], contacts: [{id:1,name:"Главный",user_id:777}], organizations: [], settings: {approver:1,earnings_enabled:true},
   };
   const calls = [];
   t.mock.method(global, "fetch", async url => {
     calls.push(String(url));
     if (url.includes("bootstrap/")) return response(bootstrap);
+    if (url.includes("earnings/?")) {
+      const month = new URL(url, "http://local").searchParams.get("month");
+      return response({month,start:month+"-01",end:month+"-12",generated_at:month+"-12T10:00:00+05:00",total:"123.45",employees:[{employee_id:1,employee_name:"Рамис",amount:"123.45"}],review:[],unassigned:[],review_total:"0.00",unassigned_total:"0.00",delivery:{id:1,state:"unknown",recipient:777,attempts:1,error:"Проверьте чат"}});
+    }
     if (url.includes("records/")) return response({ records: Array.from({ length: 50 }, (_, i) => ({ ...record, id: i + 1, amount: "100" })), count: 75, total: "7500", review: 0, employee_totals: [] });
     if (url.includes("audit/")) return response([historyEntry]);
     return response([]);
@@ -129,6 +133,43 @@ async function mountApp(t) {
   t.after(() => { act(() => renderer.unmount()); global.window = oldWindow; global.document = oldDocument; });
   return { renderer, calls };
 }
+
+test("earnings report ignores journal filters, selects its own month and exports that month", async t => {
+  const { renderer, calls } = await mountApp(t);
+  const root = renderer.root;
+  await act(async () => button(root, "Журнал работ").props.onClick());
+  await act(async () => root.findByProps({ "aria-controls": "journal-filters" }).props.onClick());
+  await act(async () => select(root, "Организация").props.onChange({ target: { value: "1" } }));
+  await act(async () => button(root, "Главный отчёт").props.onClick());
+  assert.match(text(renderer.toJSON()), /Заработок сотрудников/);
+  assert.equal(root.findAllByProps({"aria-label":"Организация"}).length, 0);
+  const monthPicker = () => root.findByProps({"aria-label":"Месяц журнала"});
+  await act(async () => monthPicker().props.onChange({target:{value:"2026-04",validity:{valid:true}}}));
+  const url = new URL(calls.filter(url=>url.includes("earnings/?")).at(-1), "http://local");
+  assert.deepEqual([...url.searchParams], [["month","2026-04"]]);
+  assert.equal(root.findAllByType("a").find(node=>text(node)==="Скачать Excel").props.href,"/api/shifts/ledger/earnings/?month=2026-04&format=xlsx");
+  assert.match(text(renderer.toJSON()), /123,45/);
+  assert.match(text(renderer.toJSON()), /Начисления без сотрудника/);
+  assert.match(text(renderer.toJSON()), /Главный/);
+  assert.equal(button(root,"Повторить отправку").props.disabled,false);
+  let confirmations=0;
+  global.window.confirm = () => {confirmations++;return false;};
+  await act(async () => button(root,"Повторить отправку").props.onClick());
+  assert.equal(confirmations,1);
+  assert.equal(calls.filter(url=>url.includes("earnings-deliveries/")).length,0);
+  global.window.confirm = () => true;
+  await act(async () => button(root,"Повторить отправку").props.onClick());
+  assert.equal(calls.filter(url=>url.includes("earnings-deliveries/1/retry/")).length,1);
+});
+
+test("earnings report hides previous month data if the next request fails", async t => {
+  const {renderer} = await mountApp(t);
+  await act(async () => button(renderer.root,"Главный отчёт").props.onClick());
+  global.fetch.mock.mockImplementation(async url=>url.includes("earnings/?") ? response({error:"Ошибка отчёта"},false) : response({}));
+  await act(async () => renderer.root.findByProps({"aria-label":"Месяц журнала"}).props.onChange({target:{value:"2026-03",validity:{valid:true}}}));
+  assert.match(text(renderer.toJSON()), /Ошибка отчёта/);
+  assert.equal(renderer.root.findAllByType("a").filter(node=>text(node)==="Скачать Excel").length,0);
+});
 
 test("journal filters collapse without clearing; organization, sorting, month and pagination work together", async t => {
   const { renderer, calls } = await mountApp(t);

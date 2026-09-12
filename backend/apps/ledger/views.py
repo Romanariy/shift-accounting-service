@@ -16,6 +16,8 @@ from .billing import approve, delete_batch, delete_invoice, prepare, refresh
 from .engine import delete_record, digest, lock, money, recalculate, record_dict, save_record
 from .models import Accrual, Batch, Delivery, EmployeePreference, Invoice, OrganizationBilling, Rate, Record, Service, Settings, TelegramContact
 from .filters import filter_records
+from . import earnings
+from .models import EarningsDelivery
 
 
 RESOURCES = {"services": Service, "rates": Rate, "accruals": Accrual, "preferences": EmployeePreference,
@@ -26,7 +28,7 @@ FIELDS = {
     "accruals": ("service", "organization", "start", "end", "active"),
     "preferences": ("employee", "service"),
     "organizations": ("organization", "monthly", "recipients"),
-    "settings": ("enabled", "approver", "day", "hour", "minute", "service_chat", "service_thread", "expense_chat", "expense_thread"),
+    "settings": ("enabled", "earnings_enabled", "approver", "day", "hour", "minute", "service_chat", "service_thread", "expense_chat", "expense_thread"),
 }
 
 
@@ -96,6 +98,19 @@ def api(request, resource, pk=None, action=None):
 
 
 def read(request, resource, pk, action):
+    if resource == "earnings":
+        data = earnings.report_data(request.GET.get("month"))
+        output_format = request.GET.get("format", "json")
+        if output_format == "xlsx":
+            response = HttpResponse(earnings.workbook_bytes(data), content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            response["Content-Disposition"] = f'attachment; filename="earnings-{data["month"]}.xlsx"'
+        elif output_format == "json":
+            data["delivery"] = earnings.delivery_data(EarningsDelivery.objects.filter(month=data["month"]).first())
+            response = reply(data)
+        else:
+            raise ValidationError("Неизвестный формат отчёта.")
+        response["Cache-Control"] = "private, no-store"
+        return response
     if resource == "bootstrap":
         Settings.objects.get_or_create(pk=1)
         return reply({**{name: [serialized(x) for x in Model.objects.all()] for name, Model in RESOURCES.items()},
@@ -157,6 +172,8 @@ def read(request, resource, pk, action):
 
 
 def mutate(request, resource, pk, action, payload):
+    if resource == "earnings-deliveries" and pk and action == "retry" and request.method == "POST":
+        return reply(earnings.delivery_data(earnings.retry(pk, payload.get("confirm_duplicate_risk"))))
     if resource == "batches" and request.method == "DELETE" and pk:
         delete_batch(pk)
         return reply({"deleted": True})

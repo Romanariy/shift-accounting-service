@@ -7,6 +7,7 @@ import HistoryDialog from "./HistoryDialog";
 import useNotice from "./useNotice";
 import SharedShiftDetails from "./SharedShiftDetails";
 import RecalculationPreview from "./RecalculationPreview";
+import EarningsReport, { EarningsData } from "./EarningsReport";
 import type { Bootstrap, Editor, Field, Item } from "./accounting-types";
 
 const base = "/api/shifts/ledger/";
@@ -46,6 +47,8 @@ export default function AccountingApp() {
   const [data,setData] = useState<Bootstrap|null>(null);
   const [records,setRecords] = useState<Item[]>([]);
   const [summary,setSummary] = useState<any>({count:0,total:0,review:0,employee_totals:[]});
+  const [earnings,setEarnings] = useState<EarningsData|null>(null);
+  const [earningsMonth,setEarningsMonth] = useState(isoToday().slice(0,7));
   const [batches,setBatches] = useState<Item[]>([]);
   const [selectedBatch,setSelectedBatch] = useState<number|null>(null);
   const [batchState,setBatchState] = useState("");
@@ -79,6 +82,11 @@ export default function AccountingApp() {
   const [recalc,setRecalc] = useState<any>(null);
   const load = useCallback(async()=>{
     const sequence = ++requestSequence.current;
+    if(page==="earnings") {
+      const [bootstrap,report] = await Promise.all([api("bootstrap/"),api("earnings/?month="+earningsMonth)]);
+      if(sequence===requestSequence.current){setData(bootstrap);setEarnings(report);}
+      return;
+    }
     const query = new URLSearchParams({month,offset:String(offset),limit:String(pageSize),ordering});
     if(org) query.set("organization",org);
     if(page==="expenses") query.set("kind","expense");
@@ -94,7 +102,7 @@ export default function AccountingApp() {
       if(offset>0 && offset>=result[1].count){setOffset(Math.max(0,Math.floor((result[1].count-1)/pageSize)*pageSize));return;}
       setData(result[0]);setRecords(result[1].records);setSummary(result[1]);setBatches(result[2]);
     }
-  },[month,org,offset,page,ordering,journalFilters,debouncedSearch,batchState,batchOrdering]);
+  },[month,org,offset,page,ordering,journalFilters,debouncedSearch,batchState,batchOrdering,earningsMonth]);
   useEffect(()=>{let active=true;setLoading(true);load().then(()=>{if(active)setError("");}).catch(e=>{if(active)setError(e.message);}).finally(()=>{if(active)setLoading(false);});return()=>{active=false;};},[load]);
   useEffect(()=>{const refresh=()=>{if(!document.hidden)load().catch(()=>{});};const id=setInterval(refresh,15000);window.addEventListener("focus",refresh);return()=>{clearInterval(id);window.removeEventListener("focus",refresh);};},[load]);
   async function run(fn:()=>Promise<any>, message="Сохранено") {setBusy(true);setError("");try{const result=await fn();await load();const changes=result?.allocation_changes||[];setNotice(message+(changes.length?". Перераспределены начисления: "+changes.map((c:any)=>`${c.employee_name||"Без исполнителя"} (№${c.id}): ${rub(c.before)} → ${rub(c.after)}`).join("; "):""));return result;}catch(e){setError(e instanceof Error?e.message:"Не удалось выполнить действие");return null;}finally{setBusy(false);}}
@@ -119,7 +127,7 @@ export default function AccountingApp() {
   function editRate(row?:Item) {setEditor({title:row?"Изменить тариф":"Новый тариф",resource:"rates",values:row||{start:isoToday(),calculation:"fixed",active:true,price:0},fields:[optionField("service","Услуга",serviceOptions),optionField("organization","Организация",orgOptions),optionField("calculation","Способ расчёта",opts(["fixed","hourly","quantity","amount"])),{key:"price",label:"Ставка, ₽",type:"number",required:true},{key:"minimum",label:"Минимум, ₽",type:"number",hint:"Для почасовой услуги — один общий минимум на организацию и день; для остальных — за запись."},{key:"maximum",label:"Максимум, ₽",type:"number",hint:"Для почасовой услуги — один общий максимум на организацию и день; для остальных — за запись."},...dateFields,activeField]});}
   function editAccrual(row?:Item) {setEditor({title:"Автоматическое начисление",resource:"accruals",values:row||{start:isoToday(),active:true},fields:[optionField("service","Услуга",serviceOptions.filter(o=>data?.services.find(s=>s.id===o.value)?.frequency!=="entry")),optionField("organization","Организация",orgOptions),...dateFields,activeField]});}
   function editProfile(organization:Item) {const profile=data?.organizations.find(o=>o.organization===organization.id);setEditor({title:`Счета · ${organization.name}`,resource:"organizations",values:profile||{organization:organization.id,include_expenses:true,monthly:false,recipients:[],excluded_services:[]},fields:[{key:"recipients",label:"Получатели Telegram",type:"multi",options:contacts,hint:"Сначала получатель должен написать боту /start. Для нескольких используйте Ctrl / Cmd."},{key:"monthly",label:"Готовить счета ежемесячно",type:"checkbox"}]});}
-  function editSchedule() {if(!data)return;setEditor({title:"Бот и ежемесячные отчёты",resource:"settings",values:data.settings,fields:[{key:"enabled",label:"Ежемесячная подготовка включена",type:"checkbox"},optionField("approver","Кто подтверждает отправку",contacts,false),{key:"day",label:"День месяца (1–28)",type:"number",required:true},{key:"hour",label:"Час (Екатеринбург)",type:"number",required:true},{key:"minute",label:"Минута",type:"number",required:true},{key:"service_chat",label:"Chat ID группы услуг",type:"number"},{key:"service_thread",label:"ID топика услуг",type:"number"},{key:"expense_chat",label:"Chat ID группы расходов",type:"number"},{key:"expense_thread",label:"ID топика расходов",type:"number"}]});}
+  function editSchedule() {if(!data)return;setEditor({title:"Бот и ежемесячные отчёты",resource:"settings",values:data.settings,fields:[{key:"earnings_enabled",label:"Отправлять главный отчёт 1-го числа в 10:00 (Екатеринбург)",type:"checkbox",hint:"Общий заработок сотрудников за прошлый месяц получает утверждающий. Независимо от рассылки счетов."},{key:"enabled",label:"Ежемесячная подготовка включена",type:"checkbox"},optionField("approver","Кто подтверждает отправку",contacts,false),{key:"day",label:"День месяца (1–28)",type:"number",required:true},{key:"hour",label:"Час (Екатеринбург)",type:"number",required:true},{key:"minute",label:"Минута",type:"number",required:true},{key:"service_chat",label:"Chat ID группы услуг",type:"number"},{key:"service_thread",label:"ID топика услуг",type:"number"},{key:"expense_chat",label:"Chat ID группы расходов",type:"number"},{key:"expense_thread",label:"ID топика расходов",type:"number"}]});}
   function editOrganization(row?:Item) {setEditor({title:row?"Организация":"Новая организация",resource:"organizations",legacy:true,values:row||{isActive:true,excelSheet:"Основной"},fields:[{key:"name",label:"Название",required:true},{key:"aliases",label:"Алиасы через запятую",type:"aliases"},{key:"excelSheet",label:"Лист старого отчёта",required:true,hint:"Новые счета используют настройки листов услуг."},{key:"isActive",label:"Активна",type:"checkbox"}]});}
   function editEmployee(row?:Item) {setEditor({title:row?"Сотрудник":"Новый сотрудник",resource:"employees",legacy:true,values:row||{isActive:true,defaultWorkType:"small_admin",sortOrder:100},fields:[{key:"shortName",label:"Короткое имя",required:true},{key:"fullName",label:"Полное имя"},{key:"telegramUsername",label:"Telegram username"},{key:"telegramUserId",label:"Telegram ID",type:"number"},{key:"aliases",label:"Алиасы",type:"aliases"},{key:"isActive",label:"Активен",type:"checkbox"}]});}
   async function saveEditor(values:Record<string,any>) {if(!editor)return;const path=editor.resource+"/"+(values.id && editor.resource!=="settings"?values.id+"/":"");const result=await run(()=>api(path,values.id || editor.resource==="settings"?"PUT":"POST",values,editor.legacy));if(result)setEditor(null);}
@@ -143,7 +151,7 @@ export default function AccountingApp() {
   async function removeInvoice(invoice:Item) {if(!window.confirm(`Полностью удалить счёт №${invoice.id} организации «${invoice.organization_name}» на ${rub(invoice.total)}?\nСчёт и файл исчезнут с сайта, исходные работы останутся. Уже доставленный файл останется в Telegram.`))return;await run(()=>api(`invoices/${invoice.id}/`,"DELETE"),"Счёт удалён с сайта. Работы сохранены.");}
   async function removeBatch(batch:Item) {if(!window.confirm(`Полностью удалить пакет №${batch.id} и все его счета (${batch.invoices.length})?\nИсходные работы сохранятся. Уже доставленные файлы останутся в Telegram.`))return;const result=await run(()=>api(`batches/${batch.id}/`,"DELETE"),"Пакет и его счета удалены");if(result)setSelectedBatch(null);}
   const selected=batches.find(b=>b.id===selectedBatch) || batches[0];
-  const titles:Record<string,[string,string]>={overview:["Всё сходится.","Работы, расходы и счета — в одном месте."],records:["Журнал работ","Типовые услуги и разовые задачи вашей команды."],expenses:["Расходы","Каждая покупка привязана к своей организации."],invoices:["Счета и отчёты","Проверяйте детали. Отправляйте только после подтверждения."],services:["Услуги и тарифы","Ваши правила расчёта — для каждой организации."],settings:["Настройки","Организации, команда и подключение Telegram."]};
+  const titles:Record<string,[string,string]>={earnings:["Главный отчёт","Заработок каждого сотрудника по всем организациям."],overview:["Всё сходится.","Работы, расходы и счета — в одном месте."],records:["Журнал работ","Типовые услуги и разовые задачи вашей команды."],expenses:["Расходы","Каждая покупка привязана к своей организации."],invoices:["Счета и отчёты","Проверяйте детали. Отправляйте только после подтверждения."],services:["Услуги и тарифы","Ваши правила расчёта — для каждой организации."],settings:["Настройки","Организации, команда и подключение Telegram."]};
   const empty = (text:string) => <div className="empty"><span className="empty-symbol">↗</span><h2>Здесь пока нет записей</h2><p>{text}</p></div>;
   const table = (rows:Item[]) => <div className="table-scroll"><table><thead><tr>
     <SortHeading field="date" label="Дата" ordering={ordering} onChange={changeOrdering}/>
@@ -164,10 +172,14 @@ export default function AccountingApp() {
       <span className="action-tooltip" data-tooltip="Удалить запись"><button disabled={busy} onClick={()=>removeRecord(r)} title="Удалить запись" aria-label="Удалить запись">×</button></span>
     </div></td>
   </tr>)}</tbody></table></div>;
-  return <div className="accounting"><aside className="sidebar"><Link className="brand" href="/">свод<span>учёт студий</span></Link><nav>{[["overview","Обзор"],["records","Журнал работ"],["expenses","Расходы"],["invoices","Счета"],["services","Услуги и тарифы"],["settings","Настройки"]].map(([id,title])=><button key={id} className={page===id?"active":""} onClick={()=>{setPage(id);setOffset(0);setSearch("");}}><Icon name={id}/>{title}</button>)}</nav><div className="sidebar-foot"><span className="status-dot"/>Екатеринбург · UTC+5<br/><span>Работа учтена.<br/>Всё под контролем.</span></div></aside>
+  return <div className="accounting"><aside className="sidebar"><Link className="brand" href="/">свод<span>учёт студий</span></Link><nav>{[["overview","Обзор"],["records","Журнал работ"],["expenses","Расходы"],["invoices","Счета"],["earnings","Главный отчёт"],["services","Услуги и тарифы"],["settings","Настройки"]].map(([id,title])=><button key={id} className={page===id?"active":""} onClick={()=>{setPage(id);setOffset(0);setSearch("");}}><Icon name={id}/>{title}</button>)}</nav><div className="sidebar-foot"><span className="status-dot"/>Екатеринбург · UTC+5<br/><span>Работа учтена.<br/>Всё под контролем.</span></div></aside>
     <main><header><span className="eyebrow">РАБОЧЕЕ ПРОСТРАНСТВО <span className="slash">/</span> {page==="overview"?"ОБЗОР":titles[page][0].toUpperCase()}</span><button className="button secondary compact" disabled={loading || busy} onClick={()=>run(load,"Данные обновлены")}>↻ Обновить</button></header>
     <div className="page-title"><div><h1>{titles[page][0]}</h1><p>{titles[page][1]}</p></div><div className="actions">{["overview","records"].includes(page)&&<><button className="button secondary" onClick={()=>editRecord("oneoff")}>Разовая работа</button><button className="button" onClick={()=>editRecord("service")}>+ Записать услугу</button></>}{page==="expenses"&&<button className="button" onClick={()=>editRecord("expense")}>+ Добавить расход</button>}{page==="invoices"&&<button className="button" disabled={busy} onClick={openBatchEditor}>Подготовить отчёты</button>}</div></div>
     {error&&<div role="alert" className="alert">{error}<button className="icon-button" onClick={()=>setError("")} title="Скрыть ошибку" aria-label="Скрыть ошибку">×</button></div>}{notice&&<div role="status" className="notice">{notice}<button className="icon-button" onClick={()=>setNotice("")} title="Скрыть уведомление" aria-label="Скрыть уведомление">×</button></div>}
+    {page==="earnings"&&<EarningsReport month={earningsMonth} maxMonth={isoToday().slice(0,7)} onMonthChange={setEarningsMonth} data={earnings} enabled={data?.settings.earnings_enabled!==false} approver={data?.contacts.find(c=>c.id===data.settings.approver)?.name} busy={busy} onRetry={(id,unknown)=>{
+      if(unknown&&!window.confirm("Telegram мог уже доставить главный отчёт. Проверьте чат. Повторить с риском дубликата?"))return;
+      run(()=>api(`earnings-deliveries/${id}/retry/`,"POST",{confirm_duplicate_risk:unknown}),"Главный отчёт поставлен в очередь отправки");
+    }}/>}
     {["overview","records","expenses","invoices"].includes(page)&&<div className="filters">
       <MonthPicker value={month} max={isoToday().slice(0,7)} onChange={value=>{setMonth(value);setOffset(0);}}/>
       {page==="invoices"&&<><select aria-label="Статус счетов" value={batchState} onChange={e=>setBatchState(e.target.value)}><option value="">Все статусы</option><option value="draft">На проверке</option><option value="approved">Подтверждённые</option></select><select aria-label="Сортировка счетов" value={batchOrdering} onChange={e=>setBatchOrdering(e.target.value)}><option value="-id">Сначала новые</option><option value="id">Сначала старые</option></select></>}

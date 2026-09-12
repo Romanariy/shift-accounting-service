@@ -41,6 +41,7 @@ async function proxyRequest(request: NextRequest, context: RouteContext) {
           "Content-Type": contentType,
           "Content-Disposition":
             response.headers.get("Content-Disposition") ?? "attachment; filename=report.xlsx",
+          "Cache-Control": "private, no-store",
         },
       });
     }
