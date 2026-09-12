@@ -78,6 +78,12 @@ class BotConfirmationTests(TestCase):
         self.assertIn("600.00 → 400.00", response)
         self.assertEqual(list(Record.objects.values_list("amount", flat=True)), [400, 400])
 
+    def test_simple_job_and_expense_receive_confirmation(self):
+        self.assertIn("Записано:", self.process(self.message("Починил дверь 1500 Фокус")))
+        self.assertEqual(Record.objects.get(message_id=1).kind, "oneoff")
+        self.assertIn("Записано:", self.process(self.message("Краска 500 Фокус", mid=2, thread=20)))
+        self.assertEqual(Record.objects.get(message_id=2).kind, "expense")
+
     def test_reply_failure_does_not_rollback_or_duplicate_record(self):
         message = self.message("12.04, 1500, Починил дверь, Фокус")
         message.reply.side_effect = TimeoutError()

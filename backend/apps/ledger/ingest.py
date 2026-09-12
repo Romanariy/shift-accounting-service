@@ -13,6 +13,7 @@ from .models import EmployeePreference, Record, Service, Settings
 
 DATE = r"\d{1,2}\.\d{1,2}(?:\.\d{2}(?:\d{2})?)?"
 AMOUNT = r"\d+(?:[.,]\d{1,2})?"
+SIMPLE_AMOUNT = r"(?:\d{1,3}(?: \d{3})+|\d+)(?:[.,]\d{1,2})?"
 ONEOFF = re.compile(rf"^(?:(?P<who>[^,]+),\s*)?(?P<date>{DATE}),\s*(?P<amount>{AMOUNT})\s*,\s*(?P<description>.+)$")
 
 
@@ -45,10 +46,14 @@ def organization_for(raw):
 
 
 def remove_organization(text):
-    candidates = sorted([(a, o) for o in Organization.objects.filter(is_active=True) for a in [o.name, *o.aliases]], key=lambda p: len(p[0]), reverse=True)
+    candidates = sorted([(a, o) for o in Organization.objects.all() for a in [o.name, *o.aliases] if a], key=lambda p: len(p[0]), reverse=True)
     for alias, org in candidates:
         match = re.search(rf"(?<!\S){re.escape(alias)}\.?$", text, re.I)
         if match:
+            if not org.is_active:
+                raise ValidationError("Указанная организация отключена.")
+            # Resolve through the common lookup to reject ambiguous aliases.
+            org = organization_for(alias)
             return text[:match.start()].strip(), org
     return text, None
 
@@ -60,10 +65,21 @@ def parse(text, *, expense=False, user_id=None, username="", author_name="", tod
         raise ValidationError("Пустое сообщение.")
     author = employee_for("", user_id, username)
     if expense:
+        body, org = remove_organization(text)
+        if org:
+            dated = re.match(rf"^({DATE})(?:,\s*|\s+)(.+)$", body)
+            day = parse_date(dated[1], today) if dated else today
+            body = dated[2] if dated else body
+            match = re.fullmatch(rf"(.+?)\s+({SIMPLE_AMOUNT})", body)
+            if match:
+                if money(match[2]) <= 0:
+                    raise ValidationError("Сумма расхода должна быть положительной.")
+                return [Record(kind="expense", date=day, amount=money(match[2]), description=match[1].strip(), organization=org)]
+        # Existing messages with comma-separated fields remain editable.
         try:
             body, org_text = text.rsplit(",", 1)
         except ValueError:
-            raise ValidationError("Формат расхода: Краска, 1500, Фокус.")
+            raise ValidationError("Формат расхода: Краска 1500 Фокус. Дату можно добавить в начале: 12.04 Краска 1500 Фокус.")
         dated = re.match(rf"^({DATE}),\s*(.+)$", body)
         day = parse_date(dated[1], today) if dated else today
         body = dated[2] if dated else body
@@ -90,6 +106,7 @@ def parse(text, *, expense=False, user_id=None, username="", author_name="", tod
     text = text[dated.end():] if dated else text
     # Preserve the existing optional employee prefix for typed service messages.
     employee = author
+    employee_hint = ""
     for e in Employee.objects.filter(is_active=True):
         found = False
         for alias in sorted([e.short_name, e.full_name, e.telegram_username, *e.aliases], key=len, reverse=True):
@@ -98,6 +115,7 @@ def parse(text, *, expense=False, user_id=None, username="", author_name="", tod
             m = re.match(rf"^@?{re.escape(alias)}\s+", text, re.I)
             if m:
                 employee = employee_for(alias, None, "")
+                employee_hint = text[:m.end()].strip()
                 text = text[m.end():]
                 found = True
                 break
@@ -126,6 +144,25 @@ def parse(text, *, expense=False, user_id=None, username="", author_name="", tod
             return None, raw
         length, service = max(candidates, key=lambda item: item[0])
         return service, raw[length:].strip()
+
+    # Prefer explicit service syntax (including quantity services and shifts).
+    # Otherwise a free-form job is description + amount, or amount + description.
+    # Parse it before splitting '+', which belongs to the free-form description.
+    leading_amount = re.match(rf"({SIMPLE_AMOUNT})\s+(.+)$", text.lstrip("+ "))
+    named_service, _ = service_prefix(text.lstrip("+ "))
+    quantity_service = service_prefix(leading_amount[2])[0] if leading_amount else None
+    if not named_service and not quantity_service and not TIME_RANGE_RE.match(text.lstrip("+ ")):
+        body, org = remove_organization(text)
+        if org:
+            first = re.fullmatch(rf"({SIMPLE_AMOUNT})\s+(.+)", body)
+            last = re.fullmatch(rf"(.+?)\s+({SIMPLE_AMOUNT})", body)
+            if first or last:
+                amount, description = (last[2], last[1]) if last else (first[1], first[2])
+                if money(amount) <= 0:
+                    raise ValidationError("Сумма разовой работы должна быть положительной.")
+                return [Record(kind="oneoff", date=day, amount=money(amount), description=description.strip(), organization=org,
+                    employee=employee, employee_name=employee.display_name if employee else employee_hint or author_name or username or str(user_id or "Неизвестный"),
+                    review=employee is None)]
 
     def organization_prefix(raw):
         candidates = []
