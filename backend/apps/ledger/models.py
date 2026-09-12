@@ -76,6 +76,7 @@ class Rate(models.Model):
 class Accrual(models.Model):
     service = models.ForeignKey(Service, on_delete=models.PROTECT)
     organization = models.ForeignKey("shifts.Organization", on_delete=models.PROTECT)
+    employee = models.ForeignKey("shifts.Employee", null=True, blank=True, on_delete=models.PROTECT)
     start = models.DateField()
     end = models.DateField(null=True, blank=True)
     active = models.BooleanField(default=True)
@@ -84,6 +85,11 @@ class Accrual(models.Model):
         constraints = [models.UniqueConstraint(fields=("service", "organization"), name="ledger_accrual_org_service")]
 
     def clean(self):
+        from apps.shifts.models import Employee
+        if self.employee_id and Employee.objects.filter(pk=self.employee_id, is_active=False).exists():
+            previous = Accrual.objects.filter(pk=self.pk).values_list("employee_id", flat=True).first() if self.pk else None
+            if previous != self.employee_id:
+                raise ValidationError("Выберите активного сотрудника для автоначисления.")
         if self.service.frequency == "entry":
             raise ValidationError("Выберите ежедневную или ежемесячную услугу.")
         if self.end and self.end < self.start:

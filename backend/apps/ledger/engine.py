@@ -203,7 +203,7 @@ def delete_record(record, actor="web", allow_frozen=False):
 def accrue(until=None):
     lock()
     until = until or timezone.localdate()
-    for schedule in Accrual.objects.filter(active=True, service__active=True, organization__is_active=True).select_related("service"):
+    for schedule in Accrual.objects.filter(active=True, service__active=True, organization__is_active=True).select_related("service", "employee"):
         day = schedule.start
         last = min(until, schedule.end) if schedule.end else until
         while day <= last:
@@ -212,13 +212,18 @@ def accrue(until=None):
             key_day = day.replace(day=1) if schedule.service.frequency == "monthly" else day
             key = f"{schedule.service_id}:{schedule.organization_id}:{key_day}"
             if not Record.objects.filter(auto_key=key).exists():
+                employee = schedule.employee
                 record = Record(kind="service", service=schedule.service, organization_id=schedule.organization_id,
-                                date=day, auto_key=key, source="auto", units=1)
+                                date=day, auto_key=key, source="auto", units=1, employee=employee,
+                                employee_name=employee.display_name if employee else "")
                 try:
                     record.amount = calculate(record)
                 except ValidationError as error:
                     record.error = " ".join(error.messages)
                     record.review = True
+                if employee and not employee.is_active:
+                    record.review = True
+                    record.error = (record.error + " Сотрудник автоначисления отключён.").strip()
                 record.save()
                 audit_record(record, None, "scheduler")
             if schedule.service.frequency == "daily":

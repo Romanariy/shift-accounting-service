@@ -25,7 +25,7 @@ RESOURCES = {"services": Service, "rates": Rate, "accruals": Accrual, "preferenc
 FIELDS = {
     "services": ("name", "aliases", "input_type", "frequency", "default_organization", "sheet", "sort_order", "active"),
     "rates": ("service", "organization", "calculation", "price", "minimum", "maximum", "start", "end", "active"),
-    "accruals": ("service", "organization", "start", "end", "active"),
+    "accruals": ("service", "organization", "employee", "start", "end", "active"),
     "preferences": ("employee", "service"),
     "organizations": ("organization", "monthly", "recipients"),
     "settings": ("enabled", "earnings_enabled", "approver", "day", "hour", "minute", "service_chat", "service_thread", "expense_chat", "expense_thread"),

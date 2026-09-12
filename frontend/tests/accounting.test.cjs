@@ -106,12 +106,13 @@ test("history ignores late responses for another record; empty history and error
   assert.doesNotMatch(text(renderer.toJSON()), /Ошибка загрузки/);
 });
 
-async function mountApp(t) {
+async function mountApp(t, overrides={}) {
   const bootstrap = {
     services: [{ id: 1, name: "Сопровождение", aliases: ["сопр"], active: true, input_type: "quantity", frequency: "entry" }],
     rates: Array.from({ length: 60 }, (_, i) => ({ id: i + 1, service: 1, organization: i < 30 ? 1 : 2, calculation: "fixed", price: 100, start: "2026-01-01", active: true })),
     organization_list: [{ id: 1, name: "Фокус", active: true }, { id: 2, name: "Студия", active: false }],
     employees: [{ id: 1, name: "Рамис", active: true }], accruals: [], preferences: [], contacts: [{id:1,name:"Главный",user_id:777}], organizations: [], settings: {approver:1,earnings_enabled:true},
+    ...overrides,
   };
   const calls = [];
   t.mock.method(global, "fetch", async url => {
@@ -169,6 +170,29 @@ test("earnings report hides previous month data if the next request fails", asyn
   await act(async () => renderer.root.findByProps({"aria-label":"Месяц журнала"}).props.onChange({target:{value:"2026-03",validity:{valid:true}}}));
   assert.match(text(renderer.toJSON()), /Ошибка отчёта/);
   assert.equal(renderer.root.findAllByType("a").filter(node=>text(node)==="Скачать Excel").length,0);
+});
+
+test("employee is configured on each accrual, not on the service", async t => {
+  const {renderer} = await mountApp(t, {
+    services:[{id:1,name:"Телефоны",aliases:[],active:true,input_type:"mark",frequency:"daily"}],
+    accruals:[{id:1,service:1,organization:1,employee:1,start:"2026-04-01",active:true}],
+  });
+  const root = renderer.root;
+  await act(async()=>button(root,"Услуги и тарифы").props.onClick());
+  await act(async()=>button(root,"Настроить").props.onClick());
+  assert.doesNotMatch(text(root.findByType("dialog")),/Сотрудник/);
+  await act(async()=>root.findByProps({"aria-label":"Закрыть"}).props.onClick());
+  await act(async()=>button(root,"Автоначисления").props.onClick());
+  assert.match(text(renderer.toJSON()),/Рамис/);
+  await act(async()=>button(root,"Изменить").props.onClick());
+  assert.equal(select(root,"Сотрудник").props.value,1);
+  await act(async()=>select(root,"Сотрудник").props.onChange({target:{value:"1"}}));
+  assert.match(text(root.findByType("dialog")),/Ранее созданные записи не изменятся/);
+  await act(async()=>root.findByType("form").props.onSubmit({preventDefault(){}}));
+  const request = global.fetch.mock.calls.find(c=>String(c.arguments[0]).endsWith("accruals/1/")&&c.arguments[1]?.method==="PUT");
+  assert.ok(request);
+  assert.equal(JSON.parse(request.arguments[1].body).employee,"1");
+  assert.equal(JSON.parse(request.arguments[1].body).organization,1);
 });
 
 test("journal filters collapse without clearing; organization, sorting, month and pagination work together", async t => {
