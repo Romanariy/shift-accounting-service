@@ -13,7 +13,7 @@ from django.views.decorators.csrf import csrf_exempt
 from apps.shifts.audit import json_safe, log_change
 from apps.shifts.models import AuditLog, Employee, Organization
 from .billing import approve, delete_batch, delete_invoice, prepare, refresh
-from .engine import delete_record, digest, lock, money, recalculate, record_dict, save_record
+from .engine import delete_record, digest, lock, money, preview_record, recalculate, record_dict, save_record
 from .models import Accrual, Batch, Delivery, EmployeePreference, Invoice, OrganizationBilling, Rate, Record, Service, Settings, TelegramContact
 from .filters import filter_records
 from . import earnings
@@ -27,7 +27,7 @@ FIELDS = {
     "rates": ("service", "organization", "calculation", "price", "minimum", "maximum", "start", "end", "active"),
     "accruals": ("service", "organization", "employee", "start", "end", "active"),
     "preferences": ("employee", "service"),
-    "organizations": ("organization", "monthly", "recipients"),
+    "organizations": ("organization", "monthly", "recipients", "payment_recipients"),
     "settings": ("enabled", "earnings_enabled", "approver", "day", "hour", "minute", "service_chat", "service_thread", "expense_chat", "expense_thread"),
 }
 
@@ -45,6 +45,8 @@ def serialized(obj):
     result["id"] = obj.pk
     if isinstance(obj, AuditLog):
         result["created_at"] = obj.created_at
+    if isinstance(obj, Invoice):
+        result["paid_at"] = obj.paid_at
     if isinstance(obj, Batch):
         result["invoices"] = [serialized(i) for i in obj.invoices.all()]
         result["deliveries"] = [serialized(d) for d in Delivery.objects.filter(batch=obj).order_by("id")]
@@ -68,6 +70,8 @@ def apply_fields(obj, payload, resource):
             setattr(obj, field.attname, int(value) if value not in (None, "") else None)
         else:
             setattr(obj, key, field.to_python(value if value != "" or not field.null else None))
+    if resource in ("services", "rates") and payload.get("active") is True:
+        obj.deleted_at = None
     obj.full_clean()
     obj.save()
     for field, ids in m2m.items():
@@ -75,6 +79,13 @@ def apply_fields(obj, payload, resource):
         if not isinstance(ids, list) or related.objects.filter(pk__in=ids).count() != len(set(ids)):
             raise ValidationError("Один из выбранных элементов не существует.")
         getattr(obj, field).set(ids)
+    if resource == "organizations":
+        recipient_ids = set(obj.recipients.values_list("pk", flat=True))
+        payment_ids = set(obj.payment_recipients.values_list("pk", flat=True))
+        if "payment_recipients" in payload and not payment_ids <= recipient_ids:
+            raise ValidationError("Подтверждение оплаты можно включить только для получателей этого счёта.")
+        # Removing a recipient also removes that organization's opt-in, including older API clients.
+        obj.payment_recipients.set(payment_ids & recipient_ids)
     return obj
 
 
@@ -86,6 +97,8 @@ def api(request, resource, pk=None, action=None):
         if request.method == "GET":
             return read(request, resource, pk, action)
         payload = json.loads(request.body or "{}")
+        if not isinstance(payload, dict):
+            raise ValidationError("Тело запроса должно быть JSON-объектом.")
         with transaction.atomic():
             lock()
             return mutate(request, resource, pk, action, payload)
@@ -98,6 +111,26 @@ def api(request, resource, pk=None, action=None):
 
 
 def read(request, resource, pk, action):
+    if resource == "payments":
+        rows = Invoice.objects.filter(batch__state="approved").exclude(payment_state="none").select_related("batch")
+        open_count = rows.filter(payment_state="open").count()
+        state = request.GET.get("state", "open")
+        if state not in ("open", "paid", "superseded", "all"):
+            raise ValidationError("Неизвестный статус оплаты.")
+        if state != "all":
+            rows = rows.filter(payment_state=state)
+        offset = max(0, int(request.GET.get("offset", 0)))
+        limit = min(250, max(1, int(request.GET.get("limit", 50))))
+        names = dict(TelegramContact.objects.values_list("user_id", "name"))
+        invoices = []
+        for invoice in rows.order_by("-batch__approved_at", "-id")[offset:offset + limit]:
+            invoices.append({"id": invoice.pk, "batch": invoice.batch_id, "organization": invoice.organization_id,
+                             "organization_name": invoice.organization_name, "version": invoice.version,
+                             "start": invoice.batch.start, "end": invoice.batch.end, "total": invoice.total,
+                             "payment_state": invoice.payment_state, "payment_recipients": invoice.payment_recipients,
+                             "paid_at": invoice.paid_at, "paid_by": invoice.paid_by,
+                             "paid_by_name": names.get(invoice.paid_by, "")})
+        return reply({"invoices": invoices, "count": rows.count(), "open_count": open_count, "offset": offset, "limit": limit})
     if resource == "earnings":
         data = earnings.report_data(request.GET.get("month"))
         output_format = request.GET.get("format", "json")
@@ -172,6 +205,8 @@ def read(request, resource, pk, action):
 
 
 def mutate(request, resource, pk, action, payload):
+    if resource == "record-preview" and request.method == "POST":
+        return reply(preview_record(payload))
     if resource == "earnings-deliveries" and pk and action == "retry" and request.method == "POST":
         return reply(earnings.delivery_data(earnings.retry(pk, payload.get("confirm_duplicate_risk"))))
     if resource == "batches" and request.method == "DELETE" and pk:
@@ -222,6 +257,8 @@ def mutate(request, resource, pk, action, payload):
             raise ValidationError("Доставка могла состояться. Подтвердите риск повторного сообщения.")
         if delivery.purpose != "owner" and delivery.version != delivery.batch.version:
             raise ValidationError("Это устаревший пакет. Обновите отчёты.")
+        if delivery.purpose == "owner" and Invoice.objects.filter(replaces_id=delivery.invoice_id, batch__state="approved").exists():
+            raise ValidationError("Этот счёт заменён новой версией. Отправьте актуальный счёт.")
         delivery.state, delivery.error = "pending", ""
         delivery.save()
         log_change("delivery", delivery.pk, "retry", actor="web")
@@ -237,8 +274,10 @@ def mutate(request, resource, pk, action, payload):
         if not hasattr(obj, "active"):
             raise ValidationError("Эту настройку нельзя удалить.")
         obj.active = False
+        if resource in ("services", "rates"):
+            obj.deleted_at = timezone.now()
         obj.save()
     else:
         apply_fields(obj, payload, resource)
-    log_change(resource, obj.pk, "update" if before else "create", actor="web", before=before, after=serialized(obj))
+    log_change(resource, obj.pk, "delete" if request.method == "DELETE" else "update" if before else "create", actor="web", before=before, after=serialized(obj))
     return reply(serialized(obj))

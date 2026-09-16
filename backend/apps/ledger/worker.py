@@ -6,7 +6,8 @@ from django.db import transaction
 from django.utils import timezone
 
 from .engine import lock
-from .models import Delivery
+from .models import Delivery, Invoice
+from .payments import payment_keyboard, queue_keyboard_removal, update_message_once
 
 
 @transaction.atomic
@@ -16,6 +17,11 @@ def claim():
     Delivery.objects.filter(state="sending", started_at__lt=timezone.now() - timedelta(minutes=5)).update(
         state="unknown", error="Процесс прервался во время доставки. Проверьте Telegram перед повтором.")
     for item in Delivery.objects.filter(state="pending").select_related("batch", "invoice").order_by("id"):
+        if item.purpose == "owner" and (item.batch.state != "approved" or not item.invoice_id or
+                Invoice.objects.filter(replaces_id=item.invoice_id, batch__state="approved").exists()):
+            item.state, item.error = "cancelled", "Счёт не утверждён или заменён новой версией."
+            item.save()
+            continue
         if item.purpose != "owner" and (item.version != item.batch.version or item.batch.state == "approved"):
             item.state = "cancelled"
             item.save()
@@ -28,13 +34,22 @@ def claim():
     return None
 
 
+@transaction.atomic
 def finish(pk, state, error="", message_id=None):
-    Delivery.objects.filter(pk=pk, state="sending").update(state=state, error=error[:2000], message_id=message_id, updated_at=timezone.now())
+    lock()
+    changed = Delivery.objects.filter(pk=pk, state="sending").update(state=state, error=error[:2000], message_id=message_id, updated_at=timezone.now())
+    if changed and state == "sent":
+        item = Delivery.objects.select_related("invoice").get(pk=pk)
+        if item.purpose == "owner" and item.invoice.payment_state != "open":
+            # Payment can arrive from the first recipient while another document is in flight.
+            queue_keyboard_removal(item.invoice)
 
 
 async def deliver_once(bot):
     from aiogram.types import BufferedInputFile, InlineKeyboardButton, InlineKeyboardMarkup
     from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramRetryAfter, TelegramUnauthorizedError
+    if await update_message_once(bot):
+        return True
     item = await sync_to_async(claim)()
     if not item:
         return False
@@ -45,7 +60,10 @@ async def deliver_once(bot):
             caption = f"{'На проверку · ' if item.purpose == 'preview' else ''}{inv.organization_name}\n{item.batch.start:%d.%m.%Y} — {item.batch.end:%d.%m.%Y}\nСчёт №{inv.pk}, версия {inv.version}\nИтого: {inv.total:,.2f} ₽{replacement}"
             if item.purpose == "preview" and inv.errors:
                 caption += "\nЕсть замечания. Исправьте их на сайте перед подтверждением."
-            result = await bot.send_document(item.recipient, BufferedInputFile(bytes(inv.artifact), filename=f"invoice-{inv.pk}-v{inv.version}.xlsx"), caption=caption)
+            markup = payment_keyboard(inv, item.recipient) if item.purpose == "owner" else None
+            if markup:
+                caption += "\nПосле оплаты нажмите «Оплатил». Подтверждение закроет счёт для всех получателей организации."
+            result = await bot.send_document(item.recipient, BufferedInputFile(bytes(inv.artifact), filename=f"invoice-{inv.pk}-v{inv.version}.xlsx"), caption=caption, reply_markup=markup)
         else:
             invoices = await sync_to_async(list)(item.batch.invoices.all())
             lines = [f"Пакет №{item.batch_id}, версия {item.version}", f"{item.batch.start:%d.%m.%Y} — {item.batch.end:%d.%m.%Y}"]

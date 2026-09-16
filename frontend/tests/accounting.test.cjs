@@ -24,6 +24,9 @@ const HistoryDialog = require("../src/components/HistoryDialog").default;
 const useNotice = require("../src/components/useNotice").default;
 const SharedShiftDetails = require("../src/components/SharedShiftDetails").default;
 const RecalculationPreview = require("../src/components/RecalculationPreview").default;
+const ServiceRecordEditor = require("../src/components/ServiceRecordEditor").default;
+const { serviceRecordPayload } = require("../src/components/ServiceRecordEditor");
+const AccountingModal = require("../src/components/AccountingModal").default;
 Module._load = originalLoad;
 
 const text = node => typeof node === "string" ? node : Array.isArray(node) ? node.map(text).join("") : node?.children?.map(text).join("") || "";
@@ -106,7 +109,7 @@ test("history ignores late responses for another record; empty history and error
   assert.doesNotMatch(text(renderer.toJSON()), /Ошибка загрузки/);
 });
 
-async function mountApp(t, overrides={}) {
+async function mountApp(t, overrides={}, resources={}) {
   const bootstrap = {
     services: [{ id: 1, name: "Сопровождение", aliases: ["сопр"], active: true, input_type: "quantity", frequency: "entry" }],
     rates: Array.from({ length: 60 }, (_, i) => ({ id: i + 1, service: 1, organization: i < 30 ? 1 : 2, calculation: "fixed", price: 100, start: "2026-01-01", active: true })),
@@ -115,9 +118,11 @@ async function mountApp(t, overrides={}) {
     ...overrides,
   };
   const calls = [];
-  t.mock.method(global, "fetch", async url => {
+  t.mock.method(global, "fetch", async (url, options={}) => {
     calls.push(String(url));
+    if (resources.request) {const result=resources.request(String(url),options,bootstrap);if(result!==undefined)return response(result);}
     if (url.includes("bootstrap/")) return response(bootstrap);
+    if (url.includes("payments/?")) return response(resources.payments||{invoices:[],count:0,open_count:0});
     if (url.includes("earnings/?")) {
       const month = new URL(url, "http://local").searchParams.get("month");
       return response({month,start:month+"-01",end:month+"-12",generated_at:month+"-12T10:00:00+05:00",total:"123.45",employees:[{employee_id:1,employee_name:"Рамис",amount:"123.45"}],review:[],unassigned:[],review_total:"0.00",unassigned_total:"0.00",delivery:{id:1,state:"unknown",recipient:777,attempts:1,error:"Проверьте чат"}});
@@ -324,4 +329,156 @@ test("recalculation preview displays old and new shares and blocks applying erro
   act(() => renderer.update(React.createElement(RecalculationPreview, {...props,preview:{...preview,errors:["Нет тарифа"]}})));
   assert.equal(button(renderer.root, "Применить проверенный пересчёт").props.disabled, true);
   act(() => renderer.unmount());
+});
+
+const serviceFormData={
+  services:[{id:1,name:"Малый админ",active:true,frequency:"entry",input_type:"time"},{id:2,name:"Сопровождение",active:true,frequency:"entry",input_type:"quantity"},{id:3,name:"Телефоны",active:true,frequency:"entry",input_type:"mark"},{id:4,name:"Договорная",active:true,frequency:"entry",input_type:"amount"}],
+  organization_list:[{id:1,name:"Фокус",active:true}],employees:[{id:1,name:"Рамис",active:true}],
+};
+const serviceEditor=(values={})=>({resource:"records",title:"Типовая услуга",fields:[],values:{kind:"service",date:"2026-09-15",organization:1,service:1,units:1,amount:"",...values}});
+
+test("service interval preview calculates displayed hours and cost, rejects stale responses and submits no blank amount", async t=>{
+  t.mock.timers.enable({apis:["setTimeout"]});
+  const first=deferred(),second=deferred(),calls=[];
+  t.mock.method(global,"fetch",(url,options)=>{calls.push({url,...options});return calls.length===1?first.promise:second.promise;});
+  let renderer,saved;
+  await act(async()=>{renderer=create(React.createElement(ServiceRecordEditor,{editor:serviceEditor(),data:serviceFormData,busy:false,error:"",onClose(){},onSave(value){saved=value;}}));});
+  t.after(()=>act(()=>renderer.unmount()));
+  await act(async()=>t.mock.timers.tick(250));
+  await act(async()=>renderer.root.findByProps({"aria-label":"Начало"}).props.onChange({target:{value:"10:30"}}));
+  assert.equal(calls[0].signal.aborted,true);
+  assert.equal(button(renderer.root,"Сохранить").props.disabled,true);
+  await act(async()=>renderer.root.findByProps({"aria-label":"Конец"}).props.onChange({target:{value:"14:30"}}));
+  await act(async()=>t.mock.timers.tick(250));
+  assert.equal(calls.length,2);
+  assert.equal(JSON.parse(calls[1].body).start_time,"10:30");
+  assert.equal("amount" in JSON.parse(calls[1].body),false);
+  assert.equal("units" in JSON.parse(calls[1].body),false);
+  await act(async()=>second.resolve(response({record:{units:"4.00",amount:"1200.00"}})));
+  await act(async()=>first.resolve(response({record:{units:"1.00",amount:"300.00"}})));
+  assert.match(text(renderer.toJSON()),/1\s200,00/);
+  const hours=renderer.root.findByProps({"aria-label":"Часы"});
+  assert.equal(hours.props.value,"4.00");assert.equal(hours.props.readOnly,true);
+  assert.equal(button(renderer.root,"Сохранить").props.disabled,false);
+  await act(async()=>renderer.root.findByType("form").props.onSubmit({preventDefault(){}}));
+  assert.deepEqual(saved,JSON.parse(calls[1].body));
+  assert.equal("amount" in saved,false);
+});
+
+test("service form displays only relevant inputs, previews fixed services and blocks saving calculation errors",async t=>{
+  t.mock.timers.enable({apis:["setTimeout"]});
+  let fail=false,latest;
+  t.mock.method(global,"fetch",async(_,options)=>{latest=JSON.parse(options.body);return fail?response({error:"Нет действующего тарифа"},false):response({record:{amount:"600",units:latest.units||"1"}});});
+  let renderer;
+  await act(async()=>{renderer=create(React.createElement(ServiceRecordEditor,{editor:serviceEditor({service:4,amount:"750"}),data:serviceFormData,busy:false,error:"",onClose(){},onSave(){}}));});
+  t.after(()=>act(()=>renderer.unmount()));
+  assert.equal(renderer.root.findAllByProps({"aria-label":"Готовая сумма, ₽"}).length,1);
+  assert.equal(renderer.root.findAllByProps({"aria-label":"Начало"}).length,0);
+  await act(async()=>renderer.root.findByProps({"aria-label":"Услуга"}).props.onChange({target:{value:"2"}}));
+  assert.equal(renderer.root.findAllByProps({"aria-label":"Готовая сумма, ₽"}).length,0);
+  await act(async()=>renderer.root.findByProps({"aria-label":"Количество"}).props.onChange({target:{value:"3"}}));
+  await act(async()=>t.mock.timers.tick(250));
+  assert.equal(latest.units,"3");assert.equal("amount" in latest,false);
+  await act(async()=>renderer.root.findByProps({"aria-label":"Услуга"}).props.onChange({target:{value:"3"}}));
+  await act(async()=>t.mock.timers.tick(250));
+  assert.equal(renderer.root.findAllByProps({"aria-label":"Количество"}).length,0);
+  assert.equal("amount" in latest,false);assert.equal("units" in latest,false);
+  assert.match(text(renderer.toJSON()),/600,00/);
+  fail=true;
+  await act(async()=>renderer.root.findByProps({"aria-label":"Дата"}).props.onChange({target:{value:"2026-09-16"}}));
+  assert.equal(button(renderer.root,"Сохранить").props.disabled,true);
+  await act(async()=>t.mock.timers.tick(250));
+  assert.match(text(renderer.toJSON()),/Нет действующего тарифа/);
+  assert.equal(button(renderer.root,"Сохранить").props.disabled,true);
+});
+
+test("comment-only service edits preserve saved hours and amount by sending a patch",async t=>{
+  t.mock.timers.enable({apis:["setTimeout"]});
+  const original={id:31,kind:"service",date:"2026-09-15",organization:1,employee:1,service:1,start_time:"10:30:00",end_time:"14:30:00",units:"4.00",amount:"777.00",description:"Было"};
+  const bodies=[];
+  t.mock.method(global,"fetch",async(_,options)=>{bodies.push(JSON.parse(options.body));return response({record:{...original}});});
+  let renderer,saved;
+  await act(async()=>{renderer=create(React.createElement(ServiceRecordEditor,{editor:serviceEditor(original),data:serviceFormData,busy:false,error:"",onClose(){},onSave(value){saved=value;}}));});
+  t.after(()=>act(()=>renderer.unmount()));
+  await act(async()=>t.mock.timers.tick(250));
+  assert.deepEqual(bodies[0],{id:31,correction:false});
+  await act(async()=>renderer.root.findByProps({"aria-label":"Комментарий"}).props.onChange({target:{value:"Стало"}}));
+  await act(async()=>t.mock.timers.tick(250));
+  assert.match(text(renderer.toJSON()),/777,00/);
+  await act(async()=>renderer.root.findByType("form").props.onSubmit({preventDefault(){}}));
+  assert.deepEqual(saved,{id:31,correction:false,description:"Стало"});
+  const quantity=serviceFormData.services[1];
+  const changed=serviceRecordPayload({...original,service:2,units:"2",amount:""},original,quantity);
+  assert.deepEqual(changed,{id:31,correction:false,service:2,units:"2",start_time:null,end_time:null});
+});
+
+test("recipient payment opt-in belongs to the organization and is removed when its recipient is unchecked",async t=>{
+  const editor={title:"Счета · Фокус",resource:"organizations",values:{organization:1,recipients:[1,2],payment_recipients:[1]},fields:[{key:"recipients",label:"Получатели Telegram",type:"recipients",options:[{value:1,label:"Анна"},{value:2,label:"Борис"}]}]};
+  let renderer,saved;
+  await act(async()=>{renderer=create(React.createElement(AccountingModal,{editor,busy:false,error:"",onClose(){},onSave(value){saved=value;}}));});
+  t.after(()=>act(()=>renderer.unmount()));
+  let choices=renderer.root.findAllByProps({className:"recipient-choice"});
+  assert.equal(choices[0].findAllByType("input")[1].props.checked,true);
+  assert.equal(choices[1].findAllByType("input")[1].props.checked,false);
+  await act(async()=>choices[1].findAllByType("input")[1].props.onChange({target:{checked:true}}));
+  await act(async()=>choices[0].findAllByType("input")[0].props.onChange({target:{checked:false}}));
+  await act(async()=>renderer.root.findByType("form").props.onSubmit({preventDefault(){}}));
+  assert.deepEqual(saved.recipients,[2]);assert.deepEqual(saved.payment_recipients,[2]);assert.equal(saved.organization,1);
+  assert.match(text(renderer.toJSON()),/Подтверждение общее для организации/);
+});
+
+test("payment tickets are independent of the journal month, refresh after Telegram payment and open their batch",async t=>{
+  const invoice={id:91,batch:17,organization:1,organization_name:"Фокус",start:"2026-04-01",end:"2026-04-30",version:1,total:"1200",payment_state:"open"};
+  let paid=false;
+  const {renderer,calls}=await mountApp(t,{}, {request(url){
+    if(url.includes("payments/?")){
+      const state=new URL(url,"http://local").searchParams.get("state");
+      const show=(state==="open"&&!paid)||(state==="paid"&&paid)||state==="all";
+      return {open_count:paid?0:1,count:show?1:0,invoices:show?[{...invoice,payment_state:paid?"paid":"open",paid_at:paid?"2026-09-15T10:00:00+05:00":null,paid_by_name:paid?"Анна":""}]:[]};
+    }
+    if(url.endsWith("batches/17/"))return {id:17,start:invoice.start,end:invoice.end,version:1,state:"approved",invoices:[{...invoice,recipients:[777],errors:[],lines:[],adjustments:[]}],deliveries:[]};
+  }});
+  const root=renderer.root;
+  assert.equal(root.findByProps({"aria-label":"Незакрытых счетов: 1"}).children[0],"1");
+  await act(async()=>root.findByProps({"aria-label":"Месяц журнала"}).props.onChange({target:{value:"2026-08",validity:{valid:true}}}));
+  await act(async()=>root.findAllByType("nav")[0].findAllByType("button").find(node=>text(node).startsWith("Оплаты")).props.onClick());
+  assert.match(text(renderer.toJSON()),/01.04.2026 — 30.04.2026/);
+  assert.equal(root.findAllByProps({"aria-label":"Месяц журнала"}).length,0);
+  const query=new URL(calls.filter(url=>url.includes("payments/?")).at(-1),"http://local").searchParams;
+  assert.deepEqual([...query.keys()].sort(),["limit","offset","state"]);
+  paid=true;
+  await act(async()=>button(root,"↻ Обновить").props.onClick());
+  assert.match(text(renderer.toJSON()),/Нет счетов, ожидающих оплаты/);
+  assert.equal(root.findByProps({"aria-label":"Незакрытых счетов: 0"}).children[0],"0");
+  await act(async()=>root.findByProps({"aria-label":"Статус оплаты"}).props.onChange({target:{value:"paid"}}));
+  assert.match(text(renderer.toJSON()),/Оплачен/);assert.match(text(renderer.toJSON()),/Анна/);
+  await act(async()=>button(root,"Открыть счёт").props.onClick());
+  assert.match(text(renderer.toJSON()),/Пакет №17/);
+  assert.equal(root.findByProps({"aria-label":"Месяц журнала"}).props.value,"2026-04");
+});
+
+test("service and tariff delete actions require confirmation and preserve access through the archive filter",async t=>{
+  const {renderer,calls}=await mountApp(t,{}, {request(url,options,bootstrap){
+    const match=url.match(/\/(services|rates)\/(\d+)\/$/);
+    if(match&&options.method==="DELETE"){bootstrap[match[1]].find(item=>item.id===Number(match[2])).active=false;return {deleted:true};}
+  }});
+  const root=renderer.root;
+  await act(async()=>button(root,"Услуги и тарифы").props.onClick());
+  let prompt;
+  global.window.confirm=value=>{prompt=value;return false;};
+  await act(async()=>button(root,"Удалить").props.onClick());
+  assert.match(prompt,/Исторические работы, суммы и счета сохранятся/);
+  assert.equal(calls.some(url=>url.endsWith("services/1/")),false);
+  global.window.confirm=()=>true;
+  await act(async()=>button(root,"Удалить").props.onClick());
+  assert.equal(button(root,"Настроить"),undefined);
+  await act(async()=>button(root,"Тарифы организаций").props.onClick());
+  assert.match(text(renderer.toJSON()),/Найдено тарифов: 0 из 60/);
+  await act(async()=>root.findByProps({className:"archive-toggle"}).findByType("input").props.onChange({target:{checked:true}}));
+  assert.match(text(renderer.toJSON()),/Найдено тарифов: 60 из 60/);
+  await act(async()=>button(root,"Удалить").props.onClick());
+  assert.ok(calls.some(url=>url.endsWith("rates/1/")));
+  assert.ok(button(root,"Восстановить / изменить"));
+  await act(async()=>button(root,"Услуги").props.onClick());
+  assert.ok(button(root,"Восстановить / настроить"));
 });

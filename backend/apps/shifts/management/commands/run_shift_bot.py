@@ -10,7 +10,8 @@ from django.utils import timezone
 from apps.ledger.billing import approve, refresh
 from apps.ledger.engine import lock
 from apps.ledger.ingest import ingest, source_kind
-from apps.ledger.models import Batch, TelegramContact
+from apps.ledger.models import Batch, Invoice, TelegramContact
+from apps.ledger.payments import mark_paid
 from apps.shifts.models import TelegramSource
 
 
@@ -79,6 +80,29 @@ async def process_message(message, edited=False):
         logger.exception("Record confirmation delivery failed: chat=%s message=%s", message.chat.id, message.message_id)
 
 
+async def process_ledger_callback(query, bot):
+    await query.answer()
+    try:
+        _, action, entity_id, version = query.data.split(":")
+        if action == "approve":
+            result = await sync_to_async(approve)(int(entity_id), int(version), actor=f"telegram:{query.from_user.id}", telegram_user=query.from_user.id)
+            text = "Пакет подтверждён. Счета поставлены в очередь отправки." if result["approved"] else result["message"]
+        elif action == "refresh":
+            await sync_to_async(refresh_authorized)(int(entity_id), int(version), query.from_user.id)
+            text = "Отчёты обновлены и поставлены в очередь доставки вам."
+        elif action == "paid":
+            if not query.message:
+                raise ValidationError("Откройте личное сообщение со счётом для подтверждения оплаты.")
+            result = await sync_to_async(mark_paid)(int(entity_id), query.from_user.id, version=int(version),
+                message_id=query.message.message_id, chat_id=query.message.chat.id)
+            text = "Оплата этого счёта уже подтверждена." if result["already_paid"] else "Оплата подтверждена. Счёт закрыт для всех получателей организации."
+        else:
+            return
+    except (ValidationError, ValueError, Batch.DoesNotExist, Invoice.DoesNotExist) as error:
+        text = " ".join(error.messages) if isinstance(error, ValidationError) else "Счёт или пакет не найден, либо кнопка устарела."
+    await bot.send_message(query.from_user.id, text)
+
+
 class Command(BaseCommand):
     help = "Запускает Telegram-бота учёта услуг, расходов и подтверждения счетов."
 
@@ -97,20 +121,7 @@ class Command(BaseCommand):
 
         @dispatcher.callback_query(F.data.startswith("ledger:"))
         async def callback(query: CallbackQuery):
-            await query.answer()
-            try:
-                _, action, bid, version = query.data.split(":")
-                if action == "approve":
-                    result = await sync_to_async(approve)(int(bid), int(version), actor=f"telegram:{query.from_user.id}", telegram_user=query.from_user.id)
-                    text = "Пакет подтверждён. Счета поставлены в очередь отправки." if result["approved"] else result["message"]
-                elif action == "refresh":
-                    await sync_to_async(refresh_authorized)(int(bid), int(version), query.from_user.id)
-                    text = "Отчёты обновлены и поставлены в очередь доставки вам."
-                else:
-                    return
-            except (ValidationError, ValueError, Batch.DoesNotExist) as error:
-                text = " ".join(error.messages) if isinstance(error, ValidationError) else "Пакет не найден или кнопка устарела."
-            await bot.send_message(query.from_user.id, text)
+            await process_ledger_callback(query, bot)
 
         @dispatcher.message()
         async def on_message(message: Message):

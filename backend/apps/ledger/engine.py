@@ -48,6 +48,8 @@ def calculate(record):
         return money(record.amount)
     rate = rate_for(record.service_id, record.organization_id, record.date)
     if rate.calculation == "amount":
+        if record.amount <= 0:
+            raise ValidationError("Укажите положительную стоимость услуги.")
         amount = record.amount
     elif rate.calculation in ("hourly", "quantity"):
         amount = rate.price * record.units
@@ -87,6 +89,7 @@ def save_record(payload, record=None, actor="web", allow_frozen=False):
     lock()
     caller_record = record
     record = Record.objects.get(pk=record.pk) if record and record.pk else Record()
+    original_service_id = record.service_id
     if record.legacy_id and (payload.get("kind", record.kind) != record.kind or str(payload.get("service", record.service_id)) != str(record.service_id)):
         raise ValidationError("Для смены типа архивной записи удалите её и создайте новую работу.")
     if record.pk and is_frozen(record) and not allow_frozen:
@@ -110,7 +113,7 @@ def save_record(payload, record=None, actor="web", allow_frozen=False):
     if not record.organization_id or not record.organization.is_active:
         raise ValidationError("Укажите активную организацию.")
     if record.kind == "service":
-        if not record.service_id or not record.service.active:
+        if not record.service_id or (not record.service.active and (not record.pk or record.service_id != original_service_id)):
             raise ValidationError("Укажите активную услугу.")
         if not record.pk and record.service.frequency != "entry":
             raise ValidationError("Эта услуга начисляется автоматически. Добавьте настройку автоначисления.")
@@ -119,17 +122,30 @@ def save_record(payload, record=None, actor="web", allow_frozen=False):
         if not record.description.strip():
             raise ValidationError("Укажите описание.")
     from datetime import time
-    for field in ("start_time", "end_time"):
-        if field in payload:
-            setattr(record, field, time.fromisoformat(payload[field]) if payload[field] else None)
-    if "units" in payload:
-        record.units = money(payload["units"])
-    if record.start_time and record.end_time:
+    input_type = record.service.input_type if record.kind == "service" else None
+    if input_type == "time":
+        for field in ("start_time", "end_time"):
+            if field in payload:
+                setattr(record, field, time.fromisoformat(payload[field]) if payload[field] else None)
+        if bool(record.start_time) != bool(record.end_time):
+            raise ValidationError("Укажите и начало, и конец интервала времени.")
+    else:
+        record.start_time = record.end_time = None
+    # A complete interval is authoritative even if an older form sends stale or blank hours.
+    if input_type == "time" and record.start_time and record.end_time:
         record.units = calculate_hours(record.start_time, record.end_time)
+    elif input_type in ("time", "quantity") and payload.get("units") not in (None, ""):
+        record.units = money(payload["units"])
+    elif input_type not in ("time", "quantity"):
+        record.units = Decimal(1)
     if record.units <= 0:
         raise ValidationError("Количество или длительность должны быть положительными.")
-    if "amount" in payload:
+    if record.service_id and record.service.legacy_code == "companion" and record.units != int(record.units):
+        raise ValidationError("Количество сопровождений должно быть целым.")
+    if "amount" in payload and payload["amount"] not in (None, ""):
         record.amount = money(payload["amount"])
+    elif "amount" in payload and (record.kind != "service" or input_type == "amount"):
+        raise ValidationError("Укажите положительную сумму.")
     if record.employee_id:
         if not record.employee.is_active:
             raise ValidationError("Сотрудник отключён.")
@@ -141,6 +157,16 @@ def save_record(payload, record=None, actor="web", allow_frozen=False):
     if caller_record is not None:
         caller_record.__dict__.update(record.__dict__)
     return record
+
+
+def preview_record(payload):
+    """Use the actual shared-day engine; discard rows, audits, outbox and on-commit callbacks."""
+    with transaction.atomic():
+        record = Record.objects.get(pk=payload["id"]) if payload.get("id") else None
+        result = save_record(payload, record, allow_frozen=payload.get("correction") is True)
+        data = {**record_dict(result), "allocation_changes": result.allocation_changes}
+        transaction.set_rollback(True)
+    return {"record": data}
 
 
 def sync_legacy(record, enqueue=True):

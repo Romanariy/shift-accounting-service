@@ -5,6 +5,7 @@ import re
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.db.models import Q
 from django.forms.models import model_to_dict
 from django.utils import timezone
 
@@ -12,6 +13,7 @@ from apps.shifts.audit import json_safe, log_change
 from apps.shifts.models import AuditLog, Organization
 from .engine import accrue, digest, lock, money, rate_for, record_dict
 from .models import Accrual, Batch, Delivery, Invoice, OrganizationBilling, Rate, Record, Service
+from .payments import queue_keyboard_removal, supersede_payment
 
 
 def safe_text(value):
@@ -91,7 +93,8 @@ def current_source(batch):
         profile, _ = OrganizationBilling.objects.get_or_create(organization_id=oid)
         org = Organization.objects.get(pk=oid)
         profiles.append({"organization": oid, "name": org.name, "active": org.is_active,
-                         "recipients": list(profile.recipients.order_by("user_id").values_list("user_id", flat=True))})
+                         "recipients": list(profile.recipients.order_by("user_id").values_list("user_id", flat=True)),
+                         "payment_recipients": list(profile.payment_recipients.filter(pk__in=profile.recipients.all()).order_by("user_id").values_list("user_id", flat=True))})
     records = [record_dict(r) for r in Record.objects.filter(organization_id__in=batch.organization_ids, date__range=(batch.start, batch.end), deleted_at=None).select_related("organization", "service").order_by("id")]
     return {"profiles": profiles, "records": records,
             "rates": list(Rate.objects.filter(organization_id__in=batch.organization_ids).order_by("id").values()),
@@ -148,6 +151,7 @@ def refresh(batch):
         profile = next(p for p in data["profiles"] if p["organization"] == invoice.organization_id)
         invoice.organization_name = profile["name"]
         invoice.recipients = profile["recipients"]
+        invoice.payment_recipients = profile["payment_recipients"]
         invoice.version = (invoice.replaces.version + 1) if invoice.replaces_id else batch.version
         # Older flags remain in the schema for compatibility, but new invoices account for every live record.
         invoice.excluded_ids = []
@@ -161,7 +165,14 @@ def refresh(batch):
                 try:
                     rate_for(line["service"], line["organization"], date.fromisoformat(line["date"]))
                 except ValidationError as error:
-                    invoice.errors.append(f'Запись #{line["id"]}: {" ".join(error.messages)}')
+                    # Archiving a tariff preserves amounts already recorded under it.
+                    # Explicitly disabling a tariff still requires review, as before.
+                    archived_rate = Rate.objects.filter(service_id=line["service"], organization_id=line["organization"],
+                        deleted_at__isnull=False, start__lte=line["date"]).filter(Q(end__isnull=True) | Q(end__gte=line["date"]))
+                    active_rate = Rate.objects.filter(service_id=line["service"], organization_id=line["organization"],
+                        active=True, start__lte=line["date"]).filter(Q(end__isnull=True) | Q(end__gte=line["date"]))
+                    if line["error"] or line["review"] or active_rate.exists() or not archived_rate.exists():
+                        invoice.errors.append(f'Запись #{line["id"]}: {" ".join(error.messages)}')
         if not profile["active"]:
             invoice.errors.append("Организация отключена.")
         invoice.total = sum((Decimal(r["amount"]) for r in invoice.lines if r["id"] not in invoice.excluded_ids), Decimal(0)) + sum((Decimal(a["amount"]) for a in invoice.adjustments), Decimal(0))
@@ -211,6 +222,14 @@ def approve(batch_id, version, actor="web", telegram_user=None):
     batch.state, batch.approved_by, batch.approved_at = "approved", actor, timezone.now()
     batch.save()
     for invoice in batch.invoices.all():
+        ancestor = invoice.replaces
+        while ancestor:
+            supersede_payment(ancestor)
+            Delivery.objects.filter(invoice=ancestor, purpose="owner", state="pending").update(state="cancelled")
+            ancestor = ancestor.replaces
+        if invoice.total and invoice.payment_recipients:
+            invoice.payment_state = "open"
+            invoice.save(update_fields=("payment_state",))
         if not invoice.total:
             continue
         for recipient in invoice.recipients:
@@ -249,8 +268,10 @@ def delete_batch(batch_id):
     if Delivery.objects.filter(batch=batch, state="sending").exists():
         raise ValidationError("Счёт сейчас отправляется. Дождитесь результата доставки и повторите удаление.")
     ids = list(batch.invoices.values_list("id", flat=True))
-    # Detach replacement references before removing protected documents and their bytes.
-    Invoice.objects.filter(replaces_id__in=ids).update(replaces=None)
+    for invoice in batch.invoices.all():
+        queue_keyboard_removal(invoice)
+        # Keep surviving versions in one chain when a middle version is removed.
+        Invoice.objects.filter(replaces=invoice).update(replaces_id=invoice.replaces_id)
     Delivery.objects.filter(batch=batch).delete()
     batch.invoices.all().delete()
     log_change("batch", batch.pk, "delete", actor="web", after={"scheduled_key": batch.scheduled_key, "invoice_ids": ids})
@@ -268,7 +289,8 @@ def delete_invoice(invoice_id):
         delete_batch(batch.pk)
         return
     oid = invoice.organization_id
-    Invoice.objects.filter(replaces=invoice).update(replaces=None)
+    queue_keyboard_removal(invoice)
+    Invoice.objects.filter(replaces=invoice).update(replaces_id=invoice.replaces_id)
     Delivery.objects.filter(invoice=invoice).delete()
     log_change("invoice", invoice.pk, "delete", actor="web", after={"batch_id": batch.pk, "organization_id": oid})
     invoice.delete()

@@ -20,6 +20,7 @@ class Service(models.Model):
     sort_order = models.IntegerField(default=100)
     included = models.BooleanField(default=True)
     active = models.BooleanField(default=True)
+    deleted_at = models.DateTimeField(null=True, blank=True)
     legacy_code = models.CharField(max_length=48, blank=True)
 
     class Meta:
@@ -53,6 +54,7 @@ class Rate(models.Model):
     start = models.DateField()
     end = models.DateField(null=True, blank=True)
     active = models.BooleanField(default=True)
+    deleted_at = models.DateTimeField(null=True, blank=True)
 
     def clean(self):
         if self.end and self.end < self.start:
@@ -115,6 +117,7 @@ class TelegramContact(models.Model):
 class OrganizationBilling(models.Model):
     organization = models.OneToOneField("shifts.Organization", on_delete=models.PROTECT)
     recipients = models.ManyToManyField(TelegramContact, blank=True)
+    payment_recipients = models.ManyToManyField(TelegramContact, blank=True, related_name="payment_organizations")
     monthly = models.BooleanField(default=False)
     include_expenses = models.BooleanField(default=True)
     excluded_services = models.ManyToManyField(Service, blank=True)
@@ -222,6 +225,10 @@ class Invoice(models.Model):
     adjustments = models.JSONField(default=list, blank=True)
     excluded_ids = models.JSONField(default=list, blank=True)
     recipients = models.JSONField(default=list)
+    payment_recipients = models.JSONField(default=list, blank=True)
+    payment_state = models.CharField(max_length=16, choices=choices("none", "open", "paid", "superseded"), default="none", db_index=True)
+    paid_at = models.DateTimeField(null=True, blank=True)
+    paid_by = models.BigIntegerField(null=True, blank=True)
     errors = models.JSONField(default=list)
     total = models.DecimalField(max_digits=16, decimal_places=2, default=0)
     artifact = models.BinaryField(default=bytes)
@@ -255,3 +262,19 @@ class EarningsDelivery(models.Model):
     started_at = models.DateTimeField(null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
     created_at = models.DateTimeField(auto_now_add=True)
+
+
+class PaymentMessageUpdate(models.Model):
+    # Telegram keyboard removal is idempotent and survives deletion of the invoice.
+    invoice = models.ForeignKey(Invoice, null=True, blank=True, on_delete=models.SET_NULL)
+    recipient = models.BigIntegerField()
+    message_id = models.BigIntegerField()
+    state = models.CharField(max_length=16, default="pending")
+    attempts = models.PositiveIntegerField(default=0)
+    retry_at = models.DateTimeField(null=True, blank=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    error = models.TextField(blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=("recipient", "message_id"), name="ledger_payment_message_update")]
