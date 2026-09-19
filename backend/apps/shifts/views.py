@@ -164,6 +164,10 @@ def apply_entry_filters(queryset, request):
 
 
 def update_employee_from_payload(employee, payload):
+    from apps.ledger.engine import lock
+    from .team import validate_binding
+    lock()
+    previous = Employee.objects.get(pk=employee.pk) if employee.pk else None
     employee.short_name = payload.get("shortName", employee.short_name).strip()
     employee.full_name = payload.get("fullName", employee.full_name).strip()
     employee.telegram_username = payload.get("telegramUsername", employee.telegram_username).strip().lstrip("@")
@@ -173,6 +177,7 @@ def update_employee_from_payload(employee, payload):
     employee.default_work_type = payload.get("defaultWorkType", employee.default_work_type)
     employee.is_active = bool(payload.get("isActive", employee.is_active))
     employee.sort_order = int(payload.get("sortOrder", employee.sort_order))
+    validate_binding(employee, previous)
     employee.full_clean()
     employee.save()
     return employee

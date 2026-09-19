@@ -26,6 +26,7 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "apps.shifts",
     "apps.ledger",
+    "apps.offers",
 ]
 
 MIDDLEWARE = [
@@ -93,3 +94,12 @@ SHIFT_SYNC_ENDPOINT = os.environ.get("SHIFT_SYNC_ENDPOINT", "")
 SHIFT_SYNC_TOKEN = os.environ.get("SHIFT_SYNC_TOKEN", "")
 SHIFT_SYNC_AFTER_WRITE = os.environ.get("SHIFT_SYNC_AFTER_WRITE", "1") != "0"
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+
+# Private files are served by authenticated application routes, never a public media URL.
+OFFER_MEDIA_ROOT = Path(os.environ.get("OFFER_MEDIA_ROOT", BASE_DIR / "offer_media"))
+OFFER_UPLOAD_BYTES = 10 * 1024 * 1024
+DATA_UPLOAD_MAX_MEMORY_SIZE = 12 * 1024 * 1024
+OFFER_MODEL_DIR = Path(os.environ.get("OFFER_MODEL_DIR", BASE_DIR / "ocr_models"))
+OFFER_OCR_THREADS = int(os.environ.get("OFFER_OCR_THREADS", "2"))
+OFFER_AUTO_PUBLISH = os.environ.get("OFFER_AUTO_PUBLISH", "0") == "1"
+OFFER_QUALITY_REPORT = os.environ.get("OFFER_QUALITY_REPORT", "")

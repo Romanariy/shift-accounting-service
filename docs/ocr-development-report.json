@@ -1,0 +1,816 @@
+{
+  "engine_version": "yclients-ios-1",
+  "independent": false,
+  "split_by_album": false,
+  "unit": "single_screenshot_development_fixture",
+  "total": 39,
+  "accepted": 21,
+  "correct_accepted": 21,
+  "precision": 1.0,
+  "lower_precision_95": 0.8453609810751531,
+  "coverage": 0.5384615384615384,
+  "latency": {
+    "median_image_seconds": 1.173,
+    "p95_image_seconds": 2.153,
+    "max_image_seconds": 2.212,
+    "median_adjacent_pair_seconds": 2.3585000000000003,
+    "p95_adjacent_pair_seconds": 4.0809999999999995,
+    "max_adjacent_pair_seconds": 4.09,
+    "note": "Pairs are sums of consecutive warm inference durations, not measured Telegram end-to-end latency."
+  },
+  "platform": "Windows-10-10.0.26200-SP0",
+  "cpu": "Intel64 Family 6 Model 186 Stepping 2, GenuineIntel",
+  "threads": 2,
+  "offline": true,
+  "startup_seconds": 7.142,
+  "rss_mb": 662.1,
+  "cpu_seconds": 118.89,
+  "two_image_probe": {
+    "indices": [
+      18,
+      20
+    ],
+    "seconds": 2.539,
+    "questions": [
+      "interval:1:end"
+    ],
+    "intervals": 3,
+    "note": "Warm local OCR plus merge; excludes Telegram download, queue wait and reply delivery."
+  },
+  "evaluation_today": "2026-08-24",
+  "limitations": [
+    "Used during development; correlated and repeated screenshots.",
+    "Organization IDs 2/3 are fixture hall families.",
+    "No independent album-level evaluation or target Linux CPU measurement."
+  ],
+  "cases": [
+    {
+      "index": 1,
+      "sha256": "e5c06de23ca26fce0f22c2efc6b046ea250fed8936ea572714a30ef9092b90a3",
+      "accepted_without_questions": true,
+      "exact_fields_correct": true,
+      "reference_complete": true,
+      "questions": [],
+      "date": "2026-08-24",
+      "intervals": [
+        [
+          "13:00",
+          "16:00"
+        ]
+      ],
+      "seconds": 2.212
+    },
+    {
+      "index": 2,
+      "sha256": "91bef39baf5232708b1e3b96c5d8e0a517f5234744c646063eb5bbb4a1ce1a36",
+      "accepted_without_questions": true,
+      "exact_fields_correct": true,
+      "reference_complete": true,
+      "questions": [],
+      "date": "2026-09-19",
+      "intervals": [
+        [
+          "13:30",
+          "16:30"
+        ],
+        [
+          "17:00",
+          "19:00"
+        ]
+      ],
+      "seconds": 1.878
+    },
+    {
+      "index": 3,
+      "sha256": "62a864b8a1f01a763ddafc874fac60db4486773af5df82d1229ecea0ab06ad97",
+      "accepted_without_questions": true,
+      "exact_fields_correct": true,
+      "reference_complete": true,
+      "questions": [],
+      "date": "2026-09-20",
+      "intervals": [
+        [
+          "17:00",
+          "21:00"
+        ]
+      ],
+      "seconds": 1.57
+    },
+    {
+      "index": 4,
+      "sha256": "9987a9bf36c75476a9b98b84ead2c1ae08616e3387d18c37770dd07f077a0f27",
+      "accepted_without_questions": true,
+      "exact_fields_correct": true,
+      "reference_complete": true,
+      "questions": [],
+      "date": "2026-09-19",
+      "intervals": [
+        [
+          "10:30",
+          "13:30"
+        ],
+        [
+          "10:30",
+          "14:00"
+        ],
+        [
+          "13:30",
+          "14:00"
+        ],
+        [
+          "14:00",
+          "15:00"
+        ]
+      ],
+      "seconds": 1.928
+    },
+    {
+      "index": 5,
+      "sha256": "7c7760fce4d96d534f30021b12e040668ab2f8215003abf35456e340ef163da7",
+      "accepted_without_questions": true,
+      "exact_fields_correct": true,
+      "reference_complete": true,
+      "questions": [],
+      "date": "2026-09-17",
+      "intervals": [
+        [
+          "14:00",
+          "15:00"
+        ],
+        [
+          "15:00",
+          "16:00"
+        ]
+      ],
+      "seconds": 2.153
+    },
+    {
+      "index": 6,
+      "sha256": "af69213ba21a9844723b52d5b0e7bdbee0d0493da188a7dfad6592edf670a103",
+      "accepted_without_questions": false,
+      "exact_fields_correct": false,
+      "reference_complete": false,
+      "questions": [
+        "interval:1:end"
+      ],
+      "date": "2026-09-16",
+      "intervals": [
+        [
+          "14:30",
+          "17:00"
+        ],
+        [
+          "19:00",
+          null
+        ]
+      ],
+      "seconds": 1.687
+    },
+    {
+      "index": 7,
+      "sha256": "214def13ebd818897cb4a265f0a7841195811bb91af2754be5b95ddb4a11e801",
+      "accepted_without_questions": false,
+      "exact_fields_correct": false,
+      "reference_complete": false,
+      "questions": [
+        "date"
+      ],
+      "date": null,
+      "intervals": [
+        [
+          "11:00",
+          "14:30"
+        ],
+        [
+          "15:00",
+          "17:30"
+        ]
+      ],
+      "seconds": 1.834
+    },
+    {
+      "index": 8,
+      "sha256": "e535f0c7674c4dff0d6366e0f89a17095272159bba9fcd1227fe1d46e6850887",
+      "accepted_without_questions": false,
+      "exact_fields_correct": false,
+      "reference_complete": false,
+      "questions": [
+        "intervals"
+      ],
+      "date": "2026-09-19",
+      "intervals": [
+        [
+          "14:00",
+          "15:00"
+        ]
+      ],
+      "seconds": 1.995
+    },
+    {
+      "index": 9,
+      "sha256": "d2583f390fc7882ef562d0669b894bb73c9b063a0364c8cc45ce3e66317d5a73",
+      "accepted_without_questions": true,
+      "exact_fields_correct": true,
+      "reference_complete": true,
+      "questions": [],
+      "date": "2026-09-20",
+      "intervals": [
+        [
+          "17:00",
+          "21:00"
+        ]
+      ],
+      "seconds": 1.81
+    },
+    {
+      "index": 10,
+      "sha256": "0871c05f11cf95717b7bad20d15cb7f378c0c4fd20687d4ee6c0acaf869a96a3",
+      "accepted_without_questions": true,
+      "exact_fields_correct": true,
+      "reference_complete": true,
+      "questions": [],
+      "date": "2026-09-20",
+      "intervals": [
+        [
+          "16:00",
+          "19:00"
+        ],
+        [
+          "16:00",
+          "19:00"
+        ]
+      ],
+      "seconds": 2.03
+    },
+    {
+      "index": 11,
+      "sha256": "003de261c20d8fc2791b0112146acdcecd72a1bb637cc3d6446155f188d981ac",
+      "accepted_without_questions": true,
+      "exact_fields_correct": true,
+      "reference_complete": true,
+      "questions": [],
+      "date": "2026-09-19",
+      "intervals": [
+        [
+          "13:30",
+          "16:30"
+        ],
+        [
+          "17:00",
+          "19:00"
+        ]
+      ],
+      "seconds": 1.815
+    },
+    {
+      "index": 12,
+      "sha256": "986f2097ee387f0361116241a21bf6b13bfcd6c02faaa0a24f2f6e79c9d4861b",
+      "accepted_without_questions": true,
+      "exact_fields_correct": true,
+      "reference_complete": true,
+      "questions": [],
+      "date": "2026-09-19",
+      "intervals": [
+        [
+          "11:00",
+          "13:30"
+        ],
+        [
+          "11:00",
+          "14:00"
+        ]
+      ],
+      "seconds": 1.744
+    },
+    {
+      "index": 13,
+      "sha256": "b161a8fde8deceb3d6907bbaf2abcbb06b3ddf56da4a47e1554e01379f9238d0",
+      "accepted_without_questions": true,
+      "exact_fields_correct": true,
+      "reference_complete": true,
+      "questions": [],
+      "date": "2026-09-19",
+      "intervals": [
+        [
+          "17:30",
+          "20:30"
+        ],
+        [
+          "17:30",
+          "20:30"
+        ]
+      ],
+      "seconds": 1.144
+    },
+    {
+      "index": 14,
+      "sha256": "57a648167b3e3a743523d0bd0d0523e14d44ae5461abe7fc337c1c1f1eeac941",
+      "accepted_without_questions": true,
+      "exact_fields_correct": true,
+      "reference_complete": true,
+      "questions": [],
+      "date": "2026-09-18",
+      "intervals": [
+        [
+          "14:00",
+          "18:00"
+        ]
+      ],
+      "seconds": 1.093
+    },
+    {
+      "index": 15,
+      "sha256": "6b27bb0790ab9f4137d0b53c9c579b5e9d47289094044915a96eb8a09234dd68",
+      "accepted_without_questions": true,
+      "exact_fields_correct": true,
+      "reference_complete": true,
+      "questions": [],
+      "date": "2026-09-16",
+      "intervals": [
+        [
+          "19:00",
+          "20:00"
+        ]
+      ],
+      "seconds": 1.01
+    },
+    {
+      "index": 16,
+      "sha256": "5f3fe45fcadc8328d5ba7c416a0237c68a502e669fc7a825800ffb705fa13d1f",
+      "accepted_without_questions": false,
+      "exact_fields_correct": true,
+      "reference_complete": true,
+      "questions": [
+        "date"
+      ],
+      "date": "2026-09-15",
+      "intervals": [
+        [
+          "16:00",
+          "19:00"
+        ],
+        [
+          "16:00",
+          "19:00"
+        ]
+      ],
+      "seconds": 1.015
+    },
+    {
+      "index": 17,
+      "sha256": "5e2de4f67a75f098b3dc14b7e09b36ef01e8fb6a86252aa18096470ca7ca1d3d",
+      "accepted_without_questions": true,
+      "exact_fields_correct": true,
+      "reference_complete": true,
+      "questions": [],
+      "date": "2026-09-15",
+      "intervals": [
+        [
+          "11:00",
+          "14:30"
+        ],
+        [
+          "15:00",
+          "17:30"
+        ]
+      ],
+      "seconds": 1.084
+    },
+    {
+      "index": 18,
+      "sha256": "942d0a2e06e398de4a27b64b9069dcaa425cffc4efc3da302c42236fcbacd231",
+      "accepted_without_questions": false,
+      "exact_fields_correct": false,
+      "reference_complete": false,
+      "questions": [
+        "interval:1:end"
+      ],
+      "date": "2026-09-14",
+      "intervals": [
+        [
+          "10:30",
+          "13:30"
+        ],
+        [
+          "13:00",
+          null
+        ],
+        [
+          "14:00",
+          "17:00"
+        ]
+      ],
+      "seconds": 1.25
+    },
+    {
+      "index": 19,
+      "sha256": "e7b5641e6020038af328ce3542566f895021c844e074e204a8adb756188b6c47",
+      "accepted_without_questions": false,
+      "exact_fields_correct": true,
+      "reference_complete": true,
+      "questions": [
+        "date"
+      ],
+      "date": "2026-09-14",
+      "intervals": [
+        [
+          "17:00",
+          "20:00"
+        ],
+        [
+          "17:00",
+          "20:00"
+        ]
+      ],
+      "seconds": 1.206
+    },
+    {
+      "index": 20,
+      "sha256": "83eded28f19a4d0ac1b5282c31d1ea37373b9650d43948fd24e54df0f608ffbb",
+      "accepted_without_questions": false,
+      "exact_fields_correct": false,
+      "reference_complete": false,
+      "questions": [
+        "interval:1:end"
+      ],
+      "date": "2026-09-14",
+      "intervals": [
+        [
+          "10:30",
+          "13:30"
+        ],
+        [
+          "13:00",
+          null
+        ],
+        [
+          "14:00",
+          "17:00"
+        ]
+      ],
+      "seconds": 1.36
+    },
+    {
+      "index": 21,
+      "sha256": "acccf0b33ab3d132bb2e3377a4e4eb4486079e39ea5d7705b293df387f61d40b",
+      "accepted_without_questions": false,
+      "exact_fields_correct": false,
+      "reference_complete": false,
+      "questions": [
+        "date"
+      ],
+      "date": null,
+      "intervals": [
+        [
+          "12:00",
+          "15:00"
+        ]
+      ],
+      "seconds": 1.113
+    },
+    {
+      "index": 22,
+      "sha256": "f952c06d661750c45a4cd1f25e8992b516c223cb5f4ea2677e33c490e24c923b",
+      "accepted_without_questions": false,
+      "exact_fields_correct": false,
+      "reference_complete": false,
+      "questions": [
+        "date"
+      ],
+      "date": null,
+      "intervals": [
+        [
+          "14:00",
+          "16:00"
+        ],
+        [
+          "17:00",
+          "19:00"
+        ]
+      ],
+      "seconds": 1.288
+    },
+    {
+      "index": 23,
+      "sha256": "8f7cb3a37aee0556de8c540772f00500b9539d7408364708cb2c79e2f178f247",
+      "accepted_without_questions": false,
+      "exact_fields_correct": false,
+      "reference_complete": true,
+      "questions": [
+        "interval:0:end",
+        "interval:1:start"
+      ],
+      "date": "2026-09-12",
+      "intervals": [
+        [
+          "14:00",
+          null
+        ],
+        [
+          "15:00",
+          "18:00"
+        ],
+        [
+          null,
+          "18:00"
+        ]
+      ],
+      "seconds": 1.292
+    },
+    {
+      "index": 24,
+      "sha256": "e226b8e59e010dde5161d46b3ceaa4cdeafb26d4423822b8f1da28b4dcad2278",
+      "accepted_without_questions": false,
+      "exact_fields_correct": false,
+      "reference_complete": false,
+      "questions": [
+        "interval:1:end"
+      ],
+      "date": "2026-09-12",
+      "intervals": [
+        [
+          "13:00",
+          "16:00"
+        ],
+        [
+          "16:30",
+          null
+        ]
+      ],
+      "seconds": 1.091
+    },
+    {
+      "index": 25,
+      "sha256": "1246e4bcc352cb722daf2044aa7745b8bac224fd2aed8393eb79c0a89e01e7d8",
+      "accepted_without_questions": true,
+      "exact_fields_correct": true,
+      "reference_complete": true,
+      "questions": [],
+      "date": "2026-09-10",
+      "intervals": [
+        [
+          "14:00",
+          "16:00"
+        ]
+      ],
+      "seconds": 0.996
+    },
+    {
+      "index": 26,
+      "sha256": "25ee92f9e4e754bf1660a6e96245b18f44550a20d914bf930f7dd93f44608b4f",
+      "accepted_without_questions": false,
+      "exact_fields_correct": false,
+      "reference_complete": false,
+      "questions": [
+        "date"
+      ],
+      "date": null,
+      "intervals": [
+        [
+          "13:00",
+          "15:00"
+        ]
+      ],
+      "seconds": 1.122
+    },
+    {
+      "index": 27,
+      "sha256": "c7ea046ab1af7ebfddc3e553fd285035f707c350cd1526643522ae43f6156c3c",
+      "accepted_without_questions": true,
+      "exact_fields_correct": true,
+      "reference_complete": true,
+      "questions": [],
+      "date": "2026-09-03",
+      "intervals": [
+        [
+          "18:00",
+          "19:00"
+        ]
+      ],
+      "seconds": 1.139
+    },
+    {
+      "index": 28,
+      "sha256": "e19fe03d0b82656cb3c1bcb95e2f3cafefecbee491bef3f2d41c9ed53f1a5bf5",
+      "accepted_without_questions": false,
+      "exact_fields_correct": false,
+      "reference_complete": true,
+      "questions": [
+        "organization"
+      ],
+      "date": "2026-08-30",
+      "intervals": [
+        [
+          "11:00",
+          "12:00"
+        ],
+        [
+          "13:30",
+          "14:30"
+        ],
+        [
+          "15:30",
+          "16:30"
+        ]
+      ],
+      "seconds": 1.173
+    },
+    {
+      "index": 29,
+      "sha256": "e52158a3ecdd08595e4e1ba3009b1191ca3888c9bd2427983946091337df102f",
+      "accepted_without_questions": true,
+      "exact_fields_correct": true,
+      "reference_complete": true,
+      "questions": [],
+      "date": "2026-08-31",
+      "intervals": [
+        [
+          "11:00",
+          "12:00"
+        ],
+        [
+          "17:00",
+          "20:00"
+        ]
+      ],
+      "seconds": 1.233
+    },
+    {
+      "index": 30,
+      "sha256": "c9e73c55d751fdb62bbe960cc09b01e54937dff6b3df2678d0eead49d4436ed0",
+      "accepted_without_questions": false,
+      "exact_fields_correct": false,
+      "reference_complete": true,
+      "questions": [
+        "organization"
+      ],
+      "date": "2026-08-31",
+      "intervals": [
+        [
+          "17:00",
+          "20:00"
+        ]
+      ],
+      "seconds": 0.907
+    },
+    {
+      "index": 31,
+      "sha256": "d1fcc1fb0d17ef41bab250e94c135f54876f284d29ff6796df1bf4440c4b347c",
+      "accepted_without_questions": true,
+      "exact_fields_correct": true,
+      "reference_complete": true,
+      "questions": [],
+      "date": "2026-08-28",
+      "intervals": [
+        [
+          "20:00",
+          "21:00"
+        ]
+      ],
+      "seconds": 0.885
+    },
+    {
+      "index": 32,
+      "sha256": "e847a62ba48818af89f43c555cdccc64971091e0bd10ab8cda08a704bf775348",
+      "accepted_without_questions": false,
+      "exact_fields_correct": false,
+      "reference_complete": true,
+      "questions": [
+        "organization"
+      ],
+      "date": "2026-08-30",
+      "intervals": [
+        [
+          "11:00",
+          "12:00"
+        ]
+      ],
+      "seconds": 1.055
+    },
+    {
+      "index": 33,
+      "sha256": "d885dbf56a10f66db7637275aa3b547f0c440282a8838c5c7026728c838b8193",
+      "accepted_without_questions": false,
+      "exact_fields_correct": false,
+      "reference_complete": true,
+      "questions": [
+        "organization",
+        "interval:0:end"
+      ],
+      "date": "2026-08-29",
+      "intervals": [
+        [
+          "12:00",
+          null
+        ]
+      ],
+      "seconds": 1.009
+    },
+    {
+      "index": 34,
+      "sha256": "3e9d4d0cf8f20b3a51390dafc53b0c6dedc1fe1d174a766c2b1f6312e9ca9984",
+      "accepted_without_questions": false,
+      "exact_fields_correct": false,
+      "reference_complete": false,
+      "questions": [
+        "date",
+        "organization",
+        "interval:0:start"
+      ],
+      "date": "2026-08-29",
+      "intervals": [
+        [
+          "19:00",
+          "20:00"
+        ],
+        [
+          null,
+          "17:00"
+        ]
+      ],
+      "seconds": 1.26
+    },
+    {
+      "index": 35,
+      "sha256": "9cd31ab02594a20caf783610b234430b70daed4e649ca0118caf8988947ec180",
+      "accepted_without_questions": true,
+      "exact_fields_correct": true,
+      "reference_complete": true,
+      "questions": [],
+      "date": "2026-08-27",
+      "intervals": [
+        [
+          "10:00",
+          "11:00"
+        ]
+      ],
+      "seconds": 0.896
+    },
+    {
+      "index": 36,
+      "sha256": "964b915d7b8273d953a003e908fdd91fbbe3710aded18ca709faf709ff0d3571",
+      "accepted_without_questions": true,
+      "exact_fields_correct": true,
+      "reference_complete": true,
+      "questions": [],
+      "date": "2026-08-27",
+      "intervals": [
+        [
+          "18:00",
+          "19:00"
+        ]
+      ],
+      "seconds": 1.101
+    },
+    {
+      "index": 37,
+      "sha256": "f067ffcc143fa586d7c16e744b0f8c849b39c85eecb632e3b9935e1a32c7a785",
+      "accepted_without_questions": false,
+      "exact_fields_correct": false,
+      "reference_complete": false,
+      "questions": [
+        "date"
+      ],
+      "date": "2026-08-05",
+      "intervals": [
+        [
+          "11:00",
+          "12:00"
+        ]
+      ],
+      "seconds": 0.949
+    },
+    {
+      "index": 38,
+      "sha256": "6a4e305022ef8950a293e9a674acad1a0556a2c1c813dfe1bfcaf1f3e9d6c0dc",
+      "accepted_without_questions": true,
+      "exact_fields_correct": true,
+      "reference_complete": true,
+      "questions": [],
+      "date": "2026-08-25",
+      "intervals": [
+        [
+          "11:00",
+          "12:00"
+        ]
+      ],
+      "seconds": 0.9
+    },
+    {
+      "index": 39,
+      "sha256": "bd80c3fc53018e1cabb358ada2b6c7fa28ab6f926bbb17ebd301a925f6cca1ae",
+      "accepted_without_questions": true,
+      "exact_fields_correct": true,
+      "reference_complete": true,
+      "questions": [],
+      "date": "2026-08-24",
+      "intervals": [
+        [
+          "12:00",
+          "13:00"
+        ]
+      ],
+      "seconds": 0.952
+    }
+  ]
+}

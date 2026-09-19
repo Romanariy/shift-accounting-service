@@ -1,17 +1,55 @@
+# Local configuration and credentials; keep safe configuration examples.
 .env
+.env.*
+!.env.example
+!.env.*.example
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Python environments and caches.
 .venv/
+venv/
 __pycache__/
 *.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Local databases, including SQLite journal/WAL sidecars.
+*.sqlite
+*.sqlite-*
 *.sqlite3
-backend/db.sqlite3
-backend/staticfiles/
+*.sqlite3-*
+/backend/staticfiles/
 
-frontend/node_modules/
-frontend/.next/
-frontend/.next-dev/
-frontend/*.tsbuildinfo
+# Frontend dependencies and generated build/test output.
+node_modules/
+.next/
+.next-dev/
+*.tsbuildinfo
+coverage/
+playwright-report/
+test-results/
 
-.dev-*.log
+# Local runs, backups and generated deliverables.
+*.log
 .dev-*.err
-npm-debug.log*
-backups/
+/backups/
+/output/
+/tmp/
+.local/
+.DS_Store
+Thumbs.db
+
+# Private OCR inputs/media and downloaded model weights.
+/DS.zip
+/DS/
+ocr_models/
+offer_media/
+.paddleocr/
+.paddlex/

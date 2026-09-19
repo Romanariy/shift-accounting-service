@@ -1,5 +1,32 @@
-.next
-node_modules
-npm-debug.log
-*.tsbuildinfo
-.env
+# Dependencies/build output are produced inside the image, never copied from Windows.
+**/.git
+**/node_modules
+**/.next
+**/.next-dev
+**/*.tsbuildinfo
+**/.env
+**/.env.*
+**/*.key
+**/*.pem
+**/*.p12
+**/*.pfx
+**/*.log
+**/.dev-*.err
+**/coverage
+**/playwright-report
+**/test-results
+**/.local
+**/backups
+**/output
+**/tmp
+**/*.sqlite
+**/*.sqlite-*
+**/*.sqlite3
+**/*.sqlite3-*
+**/ocr_models
+**/offer_media
+**/*.zip
+**/DS
+**/.DS_Store
+**/Thumbs.db
+# Keep src, public, package-lock.json and build/lint/TypeScript configuration.

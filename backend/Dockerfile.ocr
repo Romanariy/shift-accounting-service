@@ -1,0 +1,20 @@
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 \
+    PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True PADDLE_PDX_DISABLE_DEV_MODEL_WL=True \
+    OFFER_MODEL_DIR=/opt/ocr/models PADDLE_PDX_CACHE_HOME=/tmp/paddlex
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 libgl1 libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+COPY requirements.txt requirements-ocr.txt requirements-ocr-linux.lock ./
+RUN pip install --no-cache-dir -c requirements-ocr-linux.lock -r requirements.txt -r requirements-ocr.txt
+COPY scripts/download_ocr_models.py scripts/ocr-models.json ./scripts/
+RUN python scripts/download_ocr_models.py --directory /opt/ocr/models
+COPY . .
+RUN adduser --uid 1000 --disabled-password --gecos "" appuser \
+    && mkdir -p /app/offer_media /home/appuser/.cache/paddle \
+    && chown -R appuser:appuser /app /home/appuser
+USER appuser
+# Fail the build if any dependency, weight or inference graph is incompatible.
+RUN python -c "from apps.offers.recognizer import LocalOCR; import numpy as np; o=LocalOCR('/opt/ocr/models'); o.read(np.full((64,320,3),255,dtype=np.uint8))"
+CMD ["python", "manage.py", "run_recognition_worker"]

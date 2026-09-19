@@ -122,7 +122,7 @@ async function mountApp(t, overrides={}, resources={}) {
     calls.push(String(url));
     if (resources.request) {const result=resources.request(String(url),options,bootstrap);if(result!==undefined)return response(result);}
     if (url.includes("bootstrap/")) return response(bootstrap);
-    if (url.includes("payments/?")) return response(resources.payments||{invoices:[],count:0,open_count:0});
+    if (url.includes("payments/?")||url.includes("invoices/?")) return response(resources.payments||{invoices:[],count:0,open_count:0});
     if (url.includes("earnings/?")) {
       const month = new URL(url, "http://local").searchParams.get("month");
       return response({month,start:month+"-01",end:month+"-12",generated_at:month+"-12T10:00:00+05:00",total:"123.45",employees:[{employee_id:1,employee_name:"Рамис",amount:"123.45"}],review:[],unassigned:[],review_total:"0.00",unassigned_total:"0.00",delivery:{id:1,state:"unknown",recipient:777,attempts:1,error:"Проверьте чат"}});
@@ -427,34 +427,85 @@ test("recipient payment opt-in belongs to the organization and is removed when i
   assert.match(text(renderer.toJSON()),/Подтверждение общее для организации/);
 });
 
-test("payment tickets are independent of the journal month, refresh after Telegram payment and open their batch",async t=>{
+test("unified invoices keep old debts, refresh payment and preserve filters when opening and closing",async t=>{
   const invoice={id:91,batch:17,organization:1,organization_name:"Фокус",start:"2026-04-01",end:"2026-04-30",version:1,total:"1200",payment_state:"open"};
   let paid=false;
   const {renderer,calls}=await mountApp(t,{}, {request(url){
-    if(url.includes("payments/?")){
-      const state=new URL(url,"http://local").searchParams.get("state");
+    if(url.includes("payments/?")||url.includes("invoices/?")){
+      const params=new URL(url,"http://local").searchParams; const state=params.get("payment_state")||params.get("state");
       const show=(state==="open"&&!paid)||(state==="paid"&&paid)||state==="all";
       return {open_count:paid?0:1,count:show?1:0,invoices:show?[{...invoice,payment_state:paid?"paid":"open",paid_at:paid?"2026-09-15T10:00:00+05:00":null,paid_by_name:paid?"Анна":""}]:[]};
     }
     if(url.endsWith("batches/17/"))return {id:17,start:invoice.start,end:invoice.end,version:1,state:"approved",invoices:[{...invoice,recipients:[777],errors:[],lines:[],adjustments:[]}],deliveries:[]};
   }});
   const root=renderer.root;
-  assert.equal(root.findByProps({"aria-label":"Незакрытых счетов: 1"}).children[0],"1");
+  assert.equal(root.findByProps({"aria-label":"Показать неоплаченные счета: 1"}).children[0],"1");
   await act(async()=>root.findByProps({"aria-label":"Месяц журнала"}).props.onChange({target:{value:"2026-08",validity:{valid:true}}}));
-  await act(async()=>root.findAllByType("nav")[0].findAllByType("button").find(node=>text(node).startsWith("Оплаты")).props.onClick());
+  await act(async()=>root.findByProps({"aria-label":"Показать неоплаченные счета: 1"}).props.onClick());
   assert.match(text(renderer.toJSON()),/01.04.2026 — 30.04.2026/);
   assert.equal(root.findAllByProps({"aria-label":"Месяц журнала"}).length,0);
-  const query=new URL(calls.filter(url=>url.includes("payments/?")).at(-1),"http://local").searchParams;
-  assert.deepEqual([...query.keys()].sort(),["limit","offset","state"]);
+  const query=new URL(calls.filter(url=>url.includes("invoices/?")).at(-1),"http://local").searchParams;
+  assert.equal(query.has("month"),false); assert.equal(query.get("start"),""); assert.equal(query.get("end"),""); assert.equal(query.get("payment_state"),"open");
   paid=true;
   await act(async()=>button(root,"↻ Обновить").props.onClick());
   assert.match(text(renderer.toJSON()),/Нет счетов, ожидающих оплаты/);
-  assert.equal(root.findByProps({"aria-label":"Незакрытых счетов: 0"}).children[0],"0");
+  assert.equal(root.findByProps({"aria-label":"Показать неоплаченные счета: 0"}).children[0],"0");
   await act(async()=>root.findByProps({"aria-label":"Статус оплаты"}).props.onChange({target:{value:"paid"}}));
   assert.match(text(renderer.toJSON()),/Оплачен/);assert.match(text(renderer.toJSON()),/Анна/);
   await act(async()=>button(root,"Открыть счёт").props.onClick());
   assert.match(text(renderer.toJSON()),/Пакет №17/);
-  assert.equal(root.findByProps({"aria-label":"Месяц журнала"}).props.value,"2026-04");
+  assert.equal(root.findAllByProps({"aria-label":"Месяц журнала"}).length,0);
+  await act(async()=>button(root,"Закрыть карточку счёта").props.onClick());
+  assert.equal(root.findByProps({"aria-label":"Статус оплаты"}).props.value,"paid");
+});
+
+test("single invoices entry defaults to all periods and separates draft, delivery and payment",async t=>{
+  const invoice={id:5,batch:2,organization:1,organization_name:"Фокус",start:"2024-01-01",end:"2024-01-31",version:1,total:"100",batch_state:"draft",payment_state:"none",errors:[]};
+  const {renderer,calls}=await mountApp(t,{}, {payments:{invoices:[invoice],count:1,open_count:0}});
+  const root=renderer.root;
+  assert.equal(button(root,"Оплаты"),undefined);
+  await act(async()=>button(root,"Счета").props.onClick());
+  assert.equal(root.findByProps({"aria-label":"Статус оплаты"}).props.value,"all");
+  assert.match(text(renderer.toJSON()),/На проверке/); assert.match(text(renderer.toJSON()),/Без подтверждения оплаты/);
+  assert.equal(new URL(calls.filter(u=>u.includes("invoices/?")).at(-1),"http://local").searchParams.has("month"),false);
+});
+
+test("Telegram settings save proposal route with existing settings in one request",async t=>{
+  let saved;
+  const {renderer}=await mountApp(t,{offer_config:{enabled:true,chat_id:-1001,thread_id:30}}, {request(url,options,bootstrap){
+    if(url.endsWith("ledger/settings/")&&options.method==="PUT"){saved=JSON.parse(options.body);bootstrap.offer_config=saved.offer_config;return saved;}
+  }});
+  const root=renderer.root;
+  await act(async()=>button(root,"Настройки").props.onClick());
+  await act(async()=>button(root,"Telegram и расписание").props.onClick());
+  await act(async()=>button(root,"Настроить").props.onClick());
+  const modal=root.findByType(AccountingModal);
+  assert.equal(modal.props.editor.values.offer_thread_id,30);
+  assert.ok(modal.props.editor.fields.some(f=>f.key==="service_thread"));
+  assert.ok(modal.props.editor.fields.some(f=>f.key==="offer_chat_id"));
+  await act(async()=>modal.props.onSave({...modal.props.editor.values,offer_thread_id:40}));
+  assert.deepEqual(saved.offer_config,{enabled:true,chat_id:-1001,thread_id:40});
+  assert.equal(saved.approver,1); assert.equal(Object.hasOwn(saved,"offer_thread_id"),false);
+});
+
+test("team selects Telegram user ID rather than contact database ID and preserves an old unknown binding",async t=>{
+  let saved;
+  const {renderer}=await mountApp(t,{employees:[{id:1,name:"Рамис",active:true,telegram_user_id:888}],contacts:[{id:1,name:"Контакт бота",username:"person",user_id:777}]}, {request(url,options){
+    if(url.endsWith("shifts/employees/1/")){
+      if(options.method==="PUT"){saved=JSON.parse(options.body);return saved;}
+      return {id:1,shortName:"Рамис",fullName:"",telegramUserId:888,isActive:true,aliases:[]};
+    }
+  }});
+  const root=renderer.root;
+  await act(async()=>button(root,"Настройки").props.onClick());
+  await act(async()=>button(root,"Команда").props.onClick());
+  assert.match(text(renderer.toJSON()),/888 · попросите написать боту/);
+  await act(async()=>button(root,"Изменить").props.onClick());
+  const modal=root.findByType(AccountingModal),field=modal.props.editor.fields.find(f=>f.key==="telegramUserId");
+  assert.equal(field.type,"select"); assert.deepEqual(field.options.map(o=>o.value),[777,888]);
+  assert.match(field.options[0].label,/@person/);
+  await act(async()=>modal.props.onSave({...modal.props.editor.values,telegramUserId:"777"}));
+  assert.equal(saved.telegramUserId,"777");assert.equal(saved.shortName,"Рамис");
 });
 
 test("service and tariff delete actions require confirmation and preserve access through the archive filter",async t=>{

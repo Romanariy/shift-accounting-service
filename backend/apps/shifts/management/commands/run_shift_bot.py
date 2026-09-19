@@ -112,6 +112,7 @@ class Command(BaseCommand):
         from aiogram import Bot, Dispatcher, F
         from aiogram.filters import CommandStart
         from aiogram.types import CallbackQuery, Message
+        from apps.offers.bot import process_callback as process_offer_callback, process_private
         bot, dispatcher = Bot(token=settings.TELEGRAM_BOT_TOKEN), Dispatcher()
 
         @dispatcher.message(CommandStart(), F.chat.type == "private")
@@ -123,8 +124,14 @@ class Command(BaseCommand):
         async def callback(query: CallbackQuery):
             await process_ledger_callback(query, bot)
 
+        @dispatcher.callback_query(F.data.startswith("offer:"))
+        async def offer_callback(query: CallbackQuery):
+            await process_offer_callback(query)
+
         @dispatcher.message()
         async def on_message(message: Message):
+            if await process_private(message, bot):
+                return
             await process_message(message)
 
         @dispatcher.edited_message()

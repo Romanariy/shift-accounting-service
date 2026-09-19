@@ -11,8 +11,8 @@ RUN pip install --upgrade pip && pip install -r requirements.txt
 
 COPY . .
 
-RUN adduser --disabled-password --gecos "" appuser \
-    && mkdir -p /app/staticfiles \
+RUN adduser --uid 1000 --disabled-password --gecos "" appuser \
+    && mkdir -p /app/staticfiles /app/offer_media \
     && chown -R appuser:appuser /app
 
 USER appuser

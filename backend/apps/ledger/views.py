@@ -146,9 +146,11 @@ def read(request, resource, pk, action):
         return response
     if resource == "bootstrap":
         Settings.objects.get_or_create(pk=1)
+        from apps.offers.routing import config_data
+        from apps.shifts.team import team_data
         return reply({**{name: [serialized(x) for x in Model.objects.all()] for name, Model in RESOURCES.items()},
                       "settings": serialized(Settings.objects.get(pk=1)),
-                      "employees": [{"id": e.pk, "name": e.display_name, "active": e.is_active} for e in Employee.objects.all()],
+                      "offer_config": config_data(), "employees": team_data(),
                       "organization_list": [{"id": o.pk, "name": o.name, "active": o.is_active} for o in Organization.objects.all()]})
     if resource == "records":
         rows = Record.objects.filter(deleted_at=None).select_related("service", "organization")
@@ -180,6 +182,9 @@ def read(request, resource, pk, action):
         if ordering not in ("id", "-id"):
             raise ValidationError("Неизвестная сортировка пакетов.")
         return reply([serialized(b) for b in batches.order_by(ordering)[:60]])
+    if resource == "invoices" and not pk and not action:
+        from .invoices import invoice_list
+        return reply(invoice_list(request.GET))
     if resource == "invoices" and action == "file":
         invoice = Invoice.objects.get(pk=pk)
         response = HttpResponse(bytes(invoice.artifact), content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
@@ -279,5 +284,16 @@ def mutate(request, resource, pk, action, payload):
         obj.save()
     else:
         apply_fields(obj, payload, resource)
+        if resource == "settings":
+            from apps.offers.models import OfferConfig
+            from apps.offers.routing import config_data, update_config, validate_routes
+            offer_config, _ = OfferConfig.objects.get_or_create(pk=1)
+            previous = config_data(offer_config)
+            if "offer_config" in payload:
+                update_config(offer_config, payload["offer_config"])
+            validate_routes(obj, offer_config)
+            offer_config.save()
+            if previous != config_data(offer_config):
+                log_change("offer_config", 1, "updated", "web", before=previous, after=config_data(offer_config))
     log_change(resource, obj.pk, "delete" if request.method == "DELETE" else "update" if before else "create", actor="web", before=before, after=serialized(obj))
     return reply(serialized(obj))

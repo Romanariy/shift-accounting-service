@@ -18,3 +18,15 @@
 .service-preview{background:var(--soft);border:1px solid #cce2d9;border-radius:10px;padding:16px 18px;min-width:0}.service-preview>span{display:block;font-size:12px;color:var(--muted)}.service-preview>strong{display:block;font-size:26px;margin-top:5px;font-variant-numeric:tabular-nums}.service-preview p{font-size:12px}.service-preview .shared-shift{max-width:none;min-width:0}.accounting input[readonly]{background:#f4f7f6;color:var(--accent)}
 .recipient-settings{border:1px solid var(--line);border-radius:10px;padding:16px;min-width:0}.recipient-settings legend{padding:0 6px;font-size:13px;font-weight:600}.recipient-settings>p{font-size:12px;line-height:1.65}.recipient-choice{border-bottom:1px solid var(--line);padding:12px 0;display:grid;gap:10px}.form-grid .recipient-choice label{flex-direction:row;align-items:center;gap:10px;overflow-wrap:anywhere}.recipient-choice input{flex-shrink:0}.recipient-choice .payment-choice{margin-left:26px;color:var(--accent)}
 .archive-toggle{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);margin:0 0 20px}.payment-count{margin-left:auto;min-width:22px;padding:1px 6px;border-radius:12px;font-size:11px;background:#fff0d8;color:#966322}.payment-status{margin-top:12px}.accounting td .payment-status{margin-top:0}.payment-filter{display:flex;align-items:center;gap:10px;font-size:12px}.payment-filter>span{color:var(--muted)}.payments-panel td .payment-status small{max-width:270px}.payments-panel a{color:var(--accent)}
+.invoice-nav { position: relative; }
+.sidebar .nav-item > button, .sidebar .invoice-nav-label { width: 100%; }
+.sidebar nav .invoice-nav-label { padding-right: 58px; }
+.sidebar nav .nav-debt-count { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); width: auto; min-width: 28px; justify-content: center; padding: 3px 7px; border-radius: 20px; background: #fff2d9; color: #815d25; font-size: 12px; }
+.invoice-filters { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 14px; margin: 18px 24px; }
+.invoices-panel > .muted, .invoices-panel > [role="status"] { margin: 12px 24px; }
+.invoices-panel .payment-status small { max-width: 220px; }
+.invoice-filters label { display: flex; flex-direction: column; gap: 6px; flex: 1 1 150px; }
+.invoice-detail { margin-top: 24px; }
+.invoice-detail > .text-button { margin-bottom: 14px; }
+.selected-invoice { border-left: 3px solid #26776d; padding-left: 16px; }
+.invoices-panel td small { display: block; }

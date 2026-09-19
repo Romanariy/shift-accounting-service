@@ -9,6 +9,9 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    networks:
+      - default
+      - ocr_internal
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
@@ -33,6 +36,7 @@ services:
         condition: service_healthy
     volumes:
       - backend_static:/app/staticfiles
+      - offer_media:/app/offer_media
     restart: "no"
 
   backend:
@@ -53,6 +57,7 @@ services:
         condition: service_completed_successfully
     volumes:
       - backend_static:/app/staticfiles
+      - offer_media:/app/offer_media
     expose:
       - "8000"
 
@@ -105,6 +110,8 @@ services:
       DJANGO_DB_HOST: db
       DJANGO_DB_PORT: 5432
     command: python manage.py run_shift_bot
+    volumes:
+      - offer_media:/app/offer_media
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -149,8 +156,78 @@ services:
       migrate:
         condition: service_completed_successfully
 
+  recognition:
+    image: shift-accounting-recognition:latest
+    platform: linux/amd64
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.ocr
+    profiles: [bot]
+    restart: unless-stopped
+    init: true
+    environment:
+      DJANGO_DEBUG: "0"
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
+      DJANGO_DB_ENGINE: django.db.backends.postgresql
+      DJANGO_DB_NAME: ${POSTGRES_DB:-shift_accounting}
+      DJANGO_DB_USER: ${POSTGRES_USER:-shift_accounting}
+      DJANGO_DB_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+      DJANGO_DB_HOST: db
+      DJANGO_DB_PORT: 5432
+      DJANGO_TIME_ZONE: ${DJANGO_TIME_ZONE:-Asia/Yekaterinburg}
+      OFFER_MEDIA_ROOT: /app/offer_media
+      OFFER_OCR_THREADS: ${OFFER_OCR_THREADS:-2}
+      OFFER_AUTO_PUBLISH: ${OFFER_AUTO_PUBLISH:-0}
+      OFFER_QUALITY_REPORT: ${OFFER_QUALITY_REPORT:-}
+    volumes:
+      - offer_media:/app/offer_media
+    networks: [ocr_internal]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "manage.py", "run_recognition_worker", "--healthcheck"]
+      interval: 30s
+      timeout: 10s
+      start_period: 120s
+      retries: 3
+
+  offers:
+    image: shift-accounting-backend:latest
+    build:
+      context: ./backend
+    profiles: [bot]
+    restart: unless-stopped
+    init: true
+    env_file: .env
+    environment:
+      DJANGO_DB_ENGINE: django.db.backends.postgresql
+      DJANGO_DB_NAME: ${POSTGRES_DB:-shift_accounting}
+      DJANGO_DB_USER: ${POSTGRES_USER:-shift_accounting}
+      DJANGO_DB_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+      DJANGO_DB_HOST: db
+      DJANGO_DB_PORT: 5432
+      OFFER_MEDIA_ROOT: /app/offer_media
+    volumes:
+      - offer_media:/app/offer_media
+    command: python manage.py run_offers_worker
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "manage.py", "run_offers_worker", "--healthcheck"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
+
 volumes:
   postgres_data:
   backend_static:
   caddy_data:
   caddy_config:
+  offer_media:
+
+networks:
+  ocr_internal:
+    internal: true
