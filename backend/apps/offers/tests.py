@@ -24,7 +24,7 @@ from .bot import callback_action, reply_to_question
 from .delivery import claim_delivery, finish_delivery, resolve_delivery, claim_edit, finish_edit
 from .models import OfferConfig, OfferDelivery, OfferImage, OfferMessageEdit, RecognitionJob, RecognitionProfile, ShiftOffer
 from .recognition_worker import claim_job, finish_offer
-from .recognizer import nearest_date, match_organization, merge_results
+from .recognizer import nearest_date, match_organization, merge_results, _room_labels
 from .storage import store_image, media_path
 
 
@@ -316,6 +316,34 @@ class OfferFlowTests(Fixture, TestCase):
 
 
 class RecognitionRuleTests(SimpleTestCase):
+    def test_halls_below_old_date_cutoff_identify_studio(self):
+        # OCR boxes from the 720x1280 screenshot, normalized to width 900.
+        # Every hall ends below the former 128 + .10*1600 = 288 cutoff.
+        rows = [{"text": text, "box": box} for text, box in (
+            ("27 сентября", [34, 82, 253, 128]),
+            ("БОХО", [151, 263, 259, 308]),
+            ("Модерн", [329, 264, 478, 313]),
+            ("INLIGHT", [525, 264, 676, 304]),
+            ("Стол в...", [714, 264, 871, 310]),
+        )]
+        headers = [r["text"] for r in _room_labels(rows, 128, 328, 1600, 900)]
+        self.assertEqual(headers, ["БОХО", "Модерн", "INLIGHT", "Стол в..."])
+        profiles = [{"organization": 1, "rooms": [{"name": name} for name in
+                    ("БОХО", "Модерн", "INLIGHT", "Стол визажный")]}]
+        image = {"date": "2026-09-27", "date_ambiguous": False, "headers": headers,
+                 "intervals": [{"room": "Модерн", "start": "14:00", "end": None}]}
+        merged = merge_results([image], profiles)
+        self.assertEqual(merged["organization"], 1)
+        self.assertEqual([q["key"] for q in merged["questions"]], ["interval:0:end"])
+
+    def test_calendar_text_cannot_become_a_hall_header(self):
+        rows = [{"text": "Зал", "box": [150, 200, 250, 230]},
+                {"text": "10:00", "box": [5, 240, 90, 265]},
+                {"text": "Сегодня", "box": [400, 201, 520, 230]},
+                {"text": "Подпись карточки", "box": [150, 280, 320, 310]},
+                {"text": "Ещё подпись", "box": [400, 280, 530, 310]}]
+        self.assertEqual([r["text"] for r in _room_labels(rows, 100, 240, 1600, 900)], ["Зал"])
+
     def test_distinct_parallel_bookings_are_not_deduplicated_within_image(self):
         item={"room":"БОХО","start":"13:00","end":"16:00"}
         result=merge_results([{"headers":["БОХО"],"intervals":[item,item]}]*2,

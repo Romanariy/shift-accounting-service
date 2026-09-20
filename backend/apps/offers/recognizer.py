@@ -4,7 +4,7 @@ import unicodedata
 from datetime import date
 from difflib import SequenceMatcher
 
-ENGINE_VERSION = "yclients-ios-1"
+ENGINE_VERSION = "yclients-ios-2"
 MONTHS = {name: i + 1 for i, name in enumerate(("января", "февраля", "марта", "апреля", "мая", "июня",
     "июля", "августа", "сентября", "октября", "ноября", "декабря"))}
 TIME = re.compile(r"(?<!\d)([012]?\d)\s*[:.]\s*([0-5]\d)(?!\d)")
@@ -98,6 +98,20 @@ def _rows(mask, minimum):
     return [int(round(group.mean())) for group in np.split(values, np.where(np.diff(values) > 2)[0] + 1) if len(group)]
 
 
+def _room_labels(top, date_bottom, calendar_limit, height, width):
+    """Select aligned hall labels above the calendar, regardless of the date/avatar gap."""
+    candidates = [t for t in top if t["box"][1] > date_bottom + .025 * height
+        and t["box"][3] <= calendar_limit and t["box"][0] > .08 * width
+        and not times(t["text"]) and not re.search(r"\+?\d{7}|сегодня|все", t["text"], re.I)
+        and len(normalize(t["text"])) >= 3]
+    if not candidates:
+        return []
+    clusters = [[t for t in candidates if abs(t["box"][3] - c["box"][3]) < .014 * height]
+                for c in candidates]
+    labels = max(clusters, key=lambda group: (len(group), -sum(t["box"][3] for t in group)))
+    return sorted(labels, key=lambda t: t["box"][0])
+
+
 def analyze_image(path, ocr, today):
     import cv2
     import numpy as np
@@ -139,22 +153,20 @@ def analyze_image(path, ocr, today):
     if not date_boxes:
         result["issues"].append("missing_date_header")
     date_bottom = max((box[3] for box in date_boxes), default=top_begin + .045*h if banner_bottom else .093*h)
+    # The distance between date and hall names varies across iPhone layouts. Locate the
+    # calendar from its left time axis instead of cutting labels at date_bottom + .10*h.
+    # This narrow crop never includes customer cards.
+    axis_begin = int(date_bottom)
+    axis_preview = ocr.read(image[axis_begin:min(h, top_end + int(.10*h)), :int(.12*w)])
+    first_tick = min((item["box"][1] + axis_begin for item in axis_preview
+                     if len(times(item["text"])) == 1 and item["score"] >= .85), default=top_end)
+    calendar_limit = min(top_end, first_tick)
     # Hall labels are below the date and circular avatars, before the first calendar time line.
     def header_background(item):
         x1, y1, x2, y2 = item["box"]
         area = hsv[max(0,y1-3):min(h,y2+3), max(0,x1-3):min(w,x2+3)]
         return area.size and float(np.median(area[:,:,1])) < 22 and float(np.median(area[:,:,2])) > 205
-    candidates = [t for t in top if t["box"][1] > date_bottom + .025 * h
-        and t["box"][3] < date_bottom + .10 * h and t["box"][0] > .08 * w and header_background(t)
-        and not times(t["text"]) and not re.search(r"\+?\d{7}|сегодня|все", t["text"], re.I)
-        and len(normalize(t["text"])) >= 3]
-    if candidates:
-        # Pick the horizontal label row with the most aligned labels; avoid avatar text.
-        clusters = [[t for t in candidates if abs(t["box"][3] - c["box"][3]) < .014 * h] for c in candidates]
-        labels = max(clusters, key=lambda group: (len(group), -sum(t["box"][3] for t in group)))
-        labels.sort(key=lambda t: t["box"][0])
-    else:
-        labels = []
+    labels = _room_labels([t for t in top if header_background(t)], date_bottom, calendar_limit, h, w)
     result["headers"] = [t["text"] for t in labels]
     calendar_top = max((t["box"][3] for t in labels), default=date_bottom + .10 * h) + int(.003 * h)
     result["header_bottom"] = int(calendar_top / scale)
