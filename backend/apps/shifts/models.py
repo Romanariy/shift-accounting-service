@@ -1,3 +1,4 @@
+from apps.shifts.dates import date_label
 import re
 
 from django.core.exceptions import ValidationError
@@ -123,7 +124,7 @@ class PayRule(models.Model):
         ]
 
     def __str__(self):
-        return f"{self.title} с {self.active_from:%d.%m.%Y}"
+        return f"{self.title} с {date_label(self.active_from)}"
 
     def clean(self):
         shift_codes = dict(WORK_TYPE_CHOICES)
@@ -225,7 +226,7 @@ class ShiftEntry(EntryBase):
 
     def __str__(self):
         employee = self.employee_name_snapshot or "Без сотрудника"
-        return f"{self.date:%d.%m.%Y} {employee} {self.get_work_type_display()}"
+        return f"{date_label(self.date)} {employee} {self.get_work_type_display()}"
 
     @transaction.atomic
     def save(self, *args, **kwargs):
@@ -247,7 +248,7 @@ class CompanionEntry(EntryBase):
 
     def __str__(self):
         employee = self.employee_name_snapshot or "Без сотрудника"
-        return f"{self.date:%d.%m.%Y} {employee}: {self.count}"
+        return f"{date_label(self.date)} {employee}: {self.count}"
 
     @transaction.atomic
     def save(self, *args, **kwargs):

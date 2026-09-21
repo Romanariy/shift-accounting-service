@@ -1,4 +1,5 @@
 import { MonthPicker } from "./JournalFilters";
+import { dateLabel, dateTimeLabel } from "./date-format";
 
 type ReviewRow = {id:number;date:string;organization_name:string;employee_name:string;amount:string;reason:string};
 export type EarningsData = {
@@ -8,7 +9,7 @@ export type EarningsData = {
   delivery:null|{id:number;state:string;recipient:number;attempts:number;error:string;created_at:string};
 };
 const rub = (value:string) => new Intl.NumberFormat("ru-RU",{style:"currency",currency:"RUB"}).format(Number(value));
-const date = (value:string) => value.split("-").reverse().join(".");
+const date = dateLabel;
 const states:Record<string,string> = {pending:"В очереди",sending:"Отправляется",sent:"Отправлено",failed:"Ошибка",unknown:"Нужно проверить доставку"};
 
 export default function EarningsReport({month,maxMonth,onMonthChange,data,enabled,approver,busy,onRetry}: {
@@ -35,7 +36,7 @@ export default function EarningsReport({month,maxMonth,onMonthChange,data,enable
       </section>
       <section className="panel"><div className="panel-heading"><h2>На проверку</h2><strong>{rub(current.review_total)}</strong></div><p className="muted">Эти суммы не включены в заработок. Исправьте записи в журнале.</p>{current.review.length ? reviewTable(current.review) : <p>Записей на проверку нет.</p>}</section>
       <section className="panel"><div className="panel-heading"><h2>Начисления без сотрудника</h2><strong>{rub(current.unassigned_total)}</strong></div><p className="muted">Автоматические начисления без исполнителя не входят в заработок сотрудников.</p>{current.unassigned.length ? reviewTable(current.unassigned) : <p>Таких начислений нет.</p>}</section>
-      <p className="muted">Сформирован: {new Intl.DateTimeFormat("ru-RU",{timeZone:"Asia/Yekaterinburg",dateStyle:"short",timeStyle:"short"}).format(new Date(current.generated_at))} · Екатеринбург</p>
+      <p className="muted">Сформирован: {dateTimeLabel(current.generated_at)} · Екатеринбург</p>
     </>}
   </div>;
 }

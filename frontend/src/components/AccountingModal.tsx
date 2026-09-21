@@ -1,4 +1,5 @@
 "use client";
+import { dateLabel } from "./date-format";
 
 import { FormEvent, useEffect, useRef, useState } from "react";
 import type { Editor } from "./accounting-types";
@@ -33,7 +34,7 @@ export default function AccountingModal({editor,onClose,onSave,busy,error}: {edi
     }):<p>Получатели пока не подключены. Попросите их написать боту /start.</p>}<p>Получатели с флажком «Подтверждение оплаты» увидят кнопку «Оплатил» в Telegram. Счёт будет ожидать оплаты, пока любой из них не подтвердит её. Подтверждение общее для организации; закрытый счёт останется в истории оплат.</p></fieldset>:<label key={field.key} className={field.type==="textarea"||field.type==="multi"?"full":""}>
       <span>{field.label}{field.required&&" *"}</span>
       {field.type==="checkbox"?<input type="checkbox" checked={!!values[field.key]} onChange={e=>change(field.key,e.target.checked)}/>:field.type==="multi"?<select multiple value={(values[field.key]||[]).map(String)} onChange={e=>change(field.key,Array.from(e.target.selectedOptions,option=>Number(option.value)))}>{field.options?.map(option=><option value={option.value} key={option.value}>{option.label}</option>)}</select>:field.type==="select"?<select required={field.required} value={values[field.key]??""} onChange={e=>change(field.key,e.target.value)}><option value="">Не выбрано</option>{field.options?.map(option=><option value={option.value} key={option.value}>{option.label}</option>)}</select>:field.type==="textarea"?<textarea required={field.required} value={values[field.key]||""} onChange={e=>change(field.key,e.target.value)} rows={3}/>:<input required={field.required} type={field.type==="aliases"?"text":field.type||"text"} step={field.type==="number"?"any":undefined} value={field.type==="aliases"&&Array.isArray(values[field.key])?values[field.key].join(", "):values[field.key]??""} onChange={e=>change(field.key,e.target.value)}/>}
-      {field.hint&&<small>{field.hint}</small>}
+      {field.type==="date"&&values[field.key]&&<small>{dateLabel(values[field.key])}</small>}{field.hint&&<small>{field.hint}</small>}
     </label>)}</div>
     <footer><button type="button" className="button secondary" onClick={onClose}>Отмена</button><button className="button" disabled={busy}>{busy?"Сохраняем…":"Сохранить"}</button></footer>
   </form></dialog>;

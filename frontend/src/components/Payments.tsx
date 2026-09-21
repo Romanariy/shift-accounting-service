@@ -1,11 +1,12 @@
 "use client";
+import { dateLabel, dateTimeLabel } from "./date-format";
 
 import type { Item } from "./accounting-types";
 
 export type PaymentsData = {invoices:Item[];count:number;open_count:number};
 const rub=(value:unknown)=>new Intl.NumberFormat("ru-RU",{style:"currency",currency:"RUB"}).format(Number(value||0));
-const date=(value:string)=>value?value.slice(0,10).split("-").reverse().join("."):"—";
-const paidDate=(value:string)=>value?new Intl.DateTimeFormat("ru-RU",{timeZone:"Asia/Yekaterinburg",dateStyle:"short",timeStyle:"short"}).format(new Date(value)):"";
+const date=dateLabel;
+const paidDate=dateTimeLabel;
 const stateLabels:Record<string,string>={none:"Без подтверждения оплаты",open:"Ожидает оплаты",paid:"Оплачен",superseded:"Заменён новым счётом"};
 
 export function PaymentStatus({invoice,contacts=[]}: {invoice:Item;contacts?:Item[]}) {

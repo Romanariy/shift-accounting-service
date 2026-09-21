@@ -6,6 +6,8 @@ class OfferConfig(models.Model):
     id = models.PositiveSmallIntegerField(primary_key=True, default=1, editable=False)
     chat_id = models.BigIntegerField(null=True, blank=True)
     thread_id = models.BigIntegerField(null=True, blank=True)
+    claimed_thread_id = models.BigIntegerField(null=True, blank=True)
+    released_thread_id = models.BigIntegerField(null=True, blank=True)
     enabled = models.BooleanField(default=False)
 
 
@@ -31,6 +33,15 @@ class ShiftOffer(models.Model):
     source_signature = models.CharField(max_length=64, blank=True, db_index=True)
     caption_message_id = models.BigIntegerField(null=True)
     comment = models.TextField(blank=True)
+    kind = models.CharField(max_length=16, default="shift", db_index=True)
+    service = models.ForeignKey("ledger.Service", null=True, blank=True, on_delete=models.PROTECT)
+    service_name = models.CharField(max_length=160, blank=True)
+    input_type = models.CharField(max_length=16, default="time")
+    units = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    amount = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    update_target = models.ForeignKey("self", null=True, blank=True, on_delete=models.PROTECT, related_name="updates")
+    update_target_version = models.PositiveIntegerField(null=True, blank=True)
+    update_mode = models.CharField(max_length=16, blank=True)
     organization = models.ForeignKey("shifts.Organization", null=True, on_delete=models.PROTECT)
     date = models.DateField(null=True, db_index=True)
     start_time = models.TimeField(null=True)
@@ -45,6 +56,7 @@ class ShiftOffer(models.Model):
     error = models.TextField(blank=True)
     duplicate_of = models.ForeignKey("self", null=True, on_delete=models.SET_NULL)
     version = models.PositiveIntegerField(default=1)
+    delivery_generation = models.PositiveIntegerField(default=1)
     topic_chat_id = models.BigIntegerField(null=True)
     topic_thread_id = models.BigIntegerField(null=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -60,6 +72,7 @@ class OfferImage(models.Model):
     message_id = models.BigIntegerField()
     telegram_file_id = models.TextField(blank=True)
     recognized = models.JSONField(default=dict)
+    active = models.BooleanField(default=True)
     purged_at = models.DateTimeField(null=True)
 
     class Meta:
@@ -92,6 +105,10 @@ class OfferDelivery(models.Model):
     recipient = models.BigIntegerField()
     thread_id = models.BigIntegerField(null=True)
     version = models.PositiveIntegerField()
+    generation = models.PositiveIntegerField(default=1)
+    payload = models.JSONField(default=dict, blank=True)
+    delete_requested = models.BooleanField(default=False)
+    deleted_at = models.DateTimeField(null=True, blank=True)
     key = models.CharField(max_length=180, unique=True)
     state = models.CharField(max_length=16, default="pending", db_index=True)
     message_ids = models.JSONField(default=list)
@@ -118,3 +135,12 @@ class WorkerHeartbeat(models.Model):
     name = models.CharField(max_length=30, primary_key=True)
     updated_at = models.DateTimeField(auto_now=True)
     detail = models.CharField(max_length=200, blank=True)
+
+
+class OfferWizard(models.Model):
+    user_id = models.BigIntegerField(primary_key=True)
+    step = models.CharField(max_length=24, default="source")
+    data = models.JSONField(default=dict)
+    offer = models.ForeignKey(ShiftOffer, null=True, on_delete=models.SET_NULL)
+    processed_messages = models.JSONField(default=list)
+    updated_at = models.DateTimeField(auto_now=True)

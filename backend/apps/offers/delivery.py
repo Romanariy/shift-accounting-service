@@ -23,11 +23,11 @@ def claim_delivery():
         state="unknown", error="Отправка прервалась. Проверьте Telegram перед повтором.")
     for delivery in OfferDelivery.objects.filter(state="pending", available_at__lte=now).select_related("offer__organization").order_by("id")[:100]:
         offer = delivery.offer
-        if delivery.purpose in ("photos", "topic"):
-            if offer.state != "publishing":
-                delivery.state = "cancelled"
-                delivery.save()
-                continue
+        if delivery.delete_requested or service.obsolete(delivery, offer):
+            delivery.state = "cancelled"
+            delivery.save()
+            continue
+        if delivery.purpose in service.ACTIVE_PURPOSES and offer.state == "publishing":
             try:
                 service.validate_publish(offer)
             except ValidationError as error:
@@ -37,12 +37,16 @@ def claim_delivery():
                 offer.deliveries.filter(purpose__in=("photos", "topic"), state="pending").update(state="cancelled")
                 service.prompt(offer)
                 continue
-            if delivery.purpose == "topic" and not offer.deliveries.filter(purpose="photos", state="sent").exists():
-                continue
-        elif delivery.purpose in ("review", "question", "edit_menu", "assignment") and delivery.version != offer.version:
+        elif delivery.purpose in ("review", "question", "edit_menu", "update_review") and delivery.version != offer.version:
             delivery.state = "cancelled"
             delivery.save()
             continue
+        photo_purpose = {"topic": "photos", "claimed_topic": "claimed_photos", "assignment": "assignment_photos"}.get(delivery.purpose)
+        if photo_purpose:
+            photos = offer.deliveries.filter(purpose=photo_purpose, deleted_at=None, delete_requested=False,
+                generation=delivery.generation, recipient=delivery.recipient, thread_id=delivery.thread_id)
+            if photos.exclude(state="sent").exists():
+                continue
         delivery.state, delivery.started_at, delivery.attempts = "sending", now, delivery.attempts + 1
         delivery.save()
         return delivery
@@ -58,13 +62,13 @@ def finish_delivery(delivery_id, message_ids, attempt=None):
     delivery.state, delivery.message_ids, delivery.error = "sent", message_ids, ""
     delivery.save()
     offer = delivery.offer
-    if delivery.purpose == "topic" and offer.state == "publishing":
+    if (delivery.purpose == "topic" and offer.state == "publishing"
+            and delivery.generation == offer.delivery_generation and not delivery.delete_requested):
         before = service.snapshot(offer)
         offer.state, offer.published_at = "open", timezone.now()
         service.changed(offer, "published", "telegram-worker", before)
     # State could change while sending; the corrective edit always uses current database state.
-    if delivery.purpose != "photos":
-        OfferMessageEdit.objects.update_or_create(delivery=delivery, defaults={"state": "pending", "available_at": timezone.now()})
+    service.reconcile_message(delivery, offer)
     log_change("shift_offer", offer.pk, "delivered", "telegram-worker", after={"delivery": delivery.pk, "purpose": delivery.purpose})
 
 
@@ -96,12 +100,14 @@ def claim_edit():
 def finish_edit(edit, error="", delay=0, permanent=False):
     lock()
     current = OfferMessageEdit.objects.get(pk=edit.pk)
-    if current.revision != edit.revision:
+    if current.revision != edit.revision or current.attempts != edit.attempts:
         return
     current.state = "failed" if permanent else "pending" if error else "done"
     current.error = error
     current.available_at = timezone.now() + timedelta(seconds=delay)
     current.save()
+    if not error and edit.delivery.delete_requested:
+        OfferDelivery.objects.filter(pk=edit.delivery_id, delete_requested=True).update(deleted_at=timezone.now())
 
 
 async def run_once(bot):
@@ -111,15 +117,32 @@ async def run_once(bot):
     edit = await sync_to_async(claim_edit)()
     if edit:
         try:
-            text, markup = await sync_to_async(render)(edit.delivery)
-            # ForceReply only applies to the initial send; editing it away would break the reply flow.
-            if edit.delivery.purpose != "question" or edit.delivery.reply_resolved or edit.delivery.version != edit.delivery.offer.version:
+            if edit.delivery.delete_requested:
                 for message_id in edit.delivery.message_ids:
-                    await bot.edit_message_text(chat_id=edit.delivery.recipient, message_id=message_id, text=text,
-                        reply_markup=markup if isinstance(markup, InlineKeyboardMarkup) else None)
+                    try:
+                        await bot.delete_message(chat_id=edit.delivery.recipient, message_id=message_id)
+                    except TelegramBadRequest as error:
+                        if "message to delete not found" not in str(error).lower():
+                            raise
+            else:
+                text, markup = await sync_to_async(render)(edit.delivery)
+                # ForceReply only applies to the initial send; editing it away would break the reply flow.
+                if edit.delivery.purpose != "question" or edit.delivery.reply_resolved or edit.delivery.version != edit.delivery.offer.version:
+                    for message_id in edit.delivery.message_ids:
+                        await bot.edit_message_text(chat_id=edit.delivery.recipient, message_id=message_id, text=text,
+                            reply_markup=markup if isinstance(markup, InlineKeyboardMarkup) else None)
             await sync_to_async(finish_edit)(edit)
         except TelegramBadRequest as error:
-            if "message is not modified" in str(error).lower():
+            if edit.delivery.delete_requested:
+                # Telegram disallows deletion after 48 hours. At least remove obsolete
+                # controls; keep a visible, retryable cleanup error instead of claiming success.
+                for message_id in edit.delivery.message_ids:
+                    try:
+                        await bot.edit_message_reply_markup(chat_id=edit.delivery.recipient, message_id=message_id, reply_markup=None)
+                    except Exception:
+                        pass
+                await sync_to_async(finish_edit)(edit, "Telegram не разрешил удалить сообщение: оно старше 48 часов или нет прав. Удалите вручную либо восстановите права и повторите очистку.", permanent=True)
+            elif "message is not modified" in str(error).lower():
                 await sync_to_async(finish_edit)(edit)
             else:
                 await sync_to_async(finish_edit)(edit, "Telegram отклонил обновление. Сообщение могло быть удалено.", permanent=True)
@@ -137,8 +160,10 @@ async def run_once(bot):
         target = {"chat_id": delivery.recipient}
         if delivery.thread_id:
             target["message_thread_id"] = delivery.thread_id
-        if delivery.purpose == "photos":
-            images = await sync_to_async(list)(delivery.offer.images.filter(purged_at=None))
+        if delivery.purpose in service.PHOTO_PURPOSES:
+            image_query = delivery.offer.images.filter(purged_at=None)
+            image_query = image_query.filter(pk__in=delivery.payload["image_ids"]) if "image_ids" in delivery.payload else image_query.filter(active=True)
+            images = await sync_to_async(list)(image_query)
             # Deduplicate repeated screenshots within an album while keeping audit/source records.
             images = list({i.sha256: i for i in images}.values())
             if not images:
@@ -179,7 +204,7 @@ def resolve_delivery(offer_id, delivery_id, resolution, message_ids, version):
     if resolution == "sent":
         if delivery.state != "unknown" or not isinstance(message_ids, list) or not message_ids or any(type(n) is not int or n <= 0 for n in message_ids):
             raise ValidationError("Укажите ID реально отправленных сообщений из Telegram.")
-        if delivery.purpose != "photos" and len(message_ids) != 1:
+        if delivery.purpose not in service.PHOTO_PURPOSES and len(message_ids) != 1:
             raise ValidationError("Для управляющего сообщения нужен один ID.")
         finish_delivery(delivery.pk, message_ids)
     elif resolution == "not_sent":

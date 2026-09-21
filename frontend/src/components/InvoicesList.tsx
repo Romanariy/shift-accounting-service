@@ -1,11 +1,12 @@
 "use client";
+import { dateLabel } from "./date-format";
 import type { Item } from "./accounting-types";
 import { PaymentStatus, type PaymentsData } from "./Payments";
 
 export type InvoiceFilters = {organization:string;start:string;end:string;state:string;payment_state:string};
 export const emptyInvoiceFilters:InvoiceFilters = {organization:"",start:"",end:"",state:"all",payment_state:"all"};
 const rub=(value:unknown)=>new Intl.NumberFormat("ru-RU",{style:"currency",currency:"RUB"}).format(Number(value||0));
-const day=(value:string)=>value?.split("-").reverse().join(".")||"—";
+const day=dateLabel;
 
 function DeliveryState({invoice}:{invoice:Item}) {
   const counts:Record<string,number>=invoice.delivery_counts||{};

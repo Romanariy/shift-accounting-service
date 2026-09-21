@@ -27,6 +27,8 @@ const RecalculationPreview = require("../src/components/RecalculationPreview").d
 const ServiceRecordEditor = require("../src/components/ServiceRecordEditor").default;
 const { serviceRecordPayload } = require("../src/components/ServiceRecordEditor");
 const AccountingModal = require("../src/components/AccountingModal").default;
+const OfferServiceForm = require("../src/components/OfferServiceForm").default;
+const OffersConsole = require("../src/components/OffersConsole").default;
 Module._load = originalLoad;
 
 const text = node => typeof node === "string" ? node : Array.isArray(node) ? node.map(text).join("") : node?.children?.map(text).join("") || "";
@@ -442,7 +444,7 @@ test("unified invoices keep old debts, refresh payment and preserve filters when
   assert.equal(root.findByProps({"aria-label":"Показать неоплаченные счета: 1"}).children[0],"1");
   await act(async()=>root.findByProps({"aria-label":"Месяц журнала"}).props.onChange({target:{value:"2026-08",validity:{valid:true}}}));
   await act(async()=>root.findByProps({"aria-label":"Показать неоплаченные счета: 1"}).props.onClick());
-  assert.match(text(renderer.toJSON()),/01.04.2026 — 30.04.2026/);
+  assert.match(text(renderer.toJSON()),/01\.04\.2026 \(Ср\) — 30\.04\.2026 \(Чт\)/);
   assert.equal(root.findAllByProps({"aria-label":"Месяц журнала"}).length,0);
   const query=new URL(calls.filter(url=>url.includes("invoices/?")).at(-1),"http://local").searchParams;
   assert.equal(query.has("month"),false); assert.equal(query.get("start"),""); assert.equal(query.get("end"),""); assert.equal(query.get("payment_state"),"open");
@@ -472,7 +474,7 @@ test("single invoices entry defaults to all periods and separates draft, deliver
 
 test("Telegram settings save proposal route with existing settings in one request",async t=>{
   let saved;
-  const {renderer}=await mountApp(t,{offer_config:{enabled:true,chat_id:-1001,thread_id:30}}, {request(url,options,bootstrap){
+  const {renderer}=await mountApp(t,{offer_config:{enabled:true,chat_id:-1001,thread_id:30,claimed_thread_id:50,released_thread_id:60}}, {request(url,options,bootstrap){
     if(url.endsWith("ledger/settings/")&&options.method==="PUT"){saved=JSON.parse(options.body);bootstrap.offer_config=saved.offer_config;return saved;}
   }});
   const root=renderer.root;
@@ -481,10 +483,14 @@ test("Telegram settings save proposal route with existing settings in one reques
   await act(async()=>button(root,"Настроить").props.onClick());
   const modal=root.findByType(AccountingModal);
   assert.equal(modal.props.editor.values.offer_thread_id,30);
+  assert.equal(modal.props.editor.values.offer_claimed_thread_id,50);
+  assert.equal(modal.props.editor.values.offer_released_thread_id,60);
+  assert.ok(modal.props.editor.fields.some(f=>f.key==="offer_claimed_thread_id"));
+  assert.ok(modal.props.editor.fields.some(f=>f.key==="offer_released_thread_id"));
   assert.ok(modal.props.editor.fields.some(f=>f.key==="service_thread"));
   assert.ok(modal.props.editor.fields.some(f=>f.key==="offer_chat_id"));
   await act(async()=>modal.props.onSave({...modal.props.editor.values,offer_thread_id:40}));
-  assert.deepEqual(saved.offer_config,{enabled:true,chat_id:-1001,thread_id:40});
+  assert.deepEqual(saved.offer_config,{enabled:true,chat_id:-1001,thread_id:40,claimed_thread_id:50,released_thread_id:60});
   assert.equal(saved.approver,1); assert.equal(Object.hasOwn(saved,"offer_thread_id"),false);
 });
 
@@ -532,4 +538,71 @@ test("service and tariff delete actions require confirmation and preserve access
   assert.ok(button(root,"Восстановить / изменить"));
   await act(async()=>button(root,"Услуги").props.onClick());
   assert.ok(button(root,"Восстановить / настроить"));
+});
+
+
+test("dates display Russian weekdays and local timestamps cross midnight correctly",()=>{
+  const {dateLabel,dateTimeLabel}=require('../src/components/date-format');
+  assert.equal(dateLabel('2026-09-27'),'27.09.2026 (Вс)');
+  assert.equal(dateLabel('2026-09-28'),'28.09.2026 (Пн)');
+  assert.equal(dateTimeLabel('2026-09-27T20:30:00Z'),'28.09.2026 (Пн), 01:30:00');
+  assert.equal(dateLabel(null),'—');
+});
+
+
+test("offer service form follows catalog format and supports a free task", async t=>{
+  let renderer,saved;
+  const props={services:serviceFormData.services,organizations:[{id:1,name:"Фокус"}],busy:false,onCancel(){},async onSave(data){saved=data;}};
+  act(()=>{renderer=create(React.createElement(OfferServiceForm,props));});
+  t.after(()=>act(()=>renderer.unmount()));
+  const field=name=>renderer.root.findAllByType("label").find(n=>typeof n.children[0]==="string"&&n.children[0]===name);
+  act(()=>field("Услуга").findByType("select").props.onChange({target:{value:"2"}}));
+  assert.ok(field("Количество"));assert.equal(field("Начало"),undefined);
+  act(()=>field("Количество").findByType("input").props.onChange({target:{value:"3"}}));
+  act(()=>field("Организация").findByType("select").props.onChange({target:{value:"1"}}));
+  act(()=>field("Дата").findByType("input").props.onChange({target:{value:"2026-09-27"}}));
+  await act(async()=>renderer.root.findByType("form").props.onSubmit({preventDefault(){}}));
+  assert.equal(saved.input_type,"quantity");assert.equal(saved.units,"3");assert.equal(saved.start_time,null);
+  act(()=>field("Источник").findByType("select").props.onChange({target:{value:"free"}}));
+  act(()=>field("Формат").findByType("select").props.onChange({target:{value:"mark"}}));
+  act(()=>field("Название услуги").findByType("input").props.onChange({target:{value:"Проверка"}}));
+  assert.equal(field("Количество"),undefined);
+  await act(async()=>renderer.root.findByType("form").props.onSubmit({preventDefault(){}}));
+  assert.equal(saved.service,null);assert.equal(saved.input_type,"mark");assert.equal(saved.service_name,"Проверка");
+  assert.match(text(renderer.toJSON()),/27.09.2026 \(Вс\)/);
+});
+
+test("offer list filters and archive use server queries and closing details preserves filters",async t=>{
+  const config={services:serviceFormData.services,organizations:[{id:1,name:"Фокус"}],employees:[],contacts:[],workers:[]};
+  const offer={id:7,version:1,kind:"service",service_name:"Подготовка",input_type:"quantity",units:"3",amount:null,state:"review",state_label:"Проверить",organization:1,organization_name:"Фокус",date:"2026-09-27",start_time:null,end_time:null,comment:"",sender_name:"Администратор",employee_name:"",intervals:[],questions:[],images:[],history:[]};
+  const calls=[];
+  t.mock.method(global,"fetch",async url=>{calls.push(url);return response(url.includes("offer-config")?config:url.includes("offer-profiles")?{items:[]}:url.includes("offers/?")?{items:[offer],count:1}:offer);});
+  let renderer;
+  await act(async()=>{renderer=create(React.createElement(OffersConsole,{}));});
+  t.after(()=>act(()=>renderer.unmount()));
+  const field=name=>renderer.root.findAllByType("label").find(n=>n.children[0]===name);
+  await act(async()=>field("Услуга").findByType("select").props.onChange({target:{value:"free"}}));
+  await act(async()=>field("Сортировка").findByType("select").props.onChange({target:{value:"date"}}));
+  assert.ok(calls.some(url=>url.includes("service=free")&&url.includes("ordering=date")));
+  await act(async()=>button(renderer.root,"№7 · 27.09.2026 (Вс)").props.onClick());
+  assert.match(text(renderer.toJSON()),/Подготовка/);
+  await act(async()=>button(renderer.root,"Закрыть").props.onClick());
+  assert.equal(field("Услуга").findByType("select").props.value,"free");
+  assert.equal(field("Сортировка").findByType("select").props.value,"date");
+  await act(async()=>button(renderer.root,"Отменённые").props.onClick());
+  assert.ok(calls.at(-2).includes("section=cancelled")||calls.at(-1).includes("section=cancelled"));
+  assert.equal(button(renderer.root,"+ Предложить услугу"),undefined);
+});
+
+test("schedule comparison shows old and new intervals and blocks stale confirmation",async t=>{
+  const config={services:[],organizations:[],employees:[],contacts:[],workers:[]};
+  const target={id:1,version:3,start_time:"13:00",end_time:"20:00",intervals:[{room:"Модерн",start:"13:00",end:"20:00"}]};
+  const offer={id:2,version:4,state:"update_review",state_label:"Проверить изменения",kind:"shift",date:"2026-09-27",organization_name:"Фотобар",intervals:[{room:"Модерн",start:"12:00",end:"16:00"}],questions:[],update_target:1,update_mode:"replace",update_preview:{stale:true,candidates:[target],before:target,intervals:[{room:"Модерн",start:"12:00",end:"16:00"}]}};
+  t.mock.method(global,"fetch",async url=>response(url.includes("offer-config")?config:url.includes("offer-profiles")?{items:[]}:url.includes("offers/?")?{items:[offer],count:1}:offer));
+  let renderer;await act(async()=>{renderer=create(React.createElement(OffersConsole,{}));});
+  t.after(()=>act(()=>renderer.unmount()));
+  await act(async()=>button(renderer.root,"№2 · 27.09.2026 (Вс)").props.onClick());
+  assert.match(text(renderer.toJSON()),/Прежние записи/);assert.match(text(renderer.toJSON()),/После подтверждения/);
+  assert.equal(button(renderer.root,"Подтвердить обновление").props.disabled,true);
+  assert.ok(button(renderer.root,"Дополнить"));assert.ok(button(renderer.root,"Заменить"));
 });

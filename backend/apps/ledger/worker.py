@@ -1,3 +1,4 @@
+from apps.shifts.dates import date_label
 import asyncio
 from datetime import timedelta
 
@@ -57,7 +58,7 @@ async def deliver_once(bot):
         if item.purpose in ("owner", "preview"):
             inv = item.invoice
             replacement = f"\nЗаменяет счёт №{inv.replaces_id}." if inv.replaces_id else ""
-            caption = f"{'На проверку · ' if item.purpose == 'preview' else ''}{inv.organization_name}\n{item.batch.start:%d.%m.%Y} — {item.batch.end:%d.%m.%Y}\nСчёт №{inv.pk}, версия {inv.version}\nИтого: {inv.total:,.2f} ₽{replacement}"
+            caption = f"{'На проверку · ' if item.purpose == 'preview' else ''}{inv.organization_name}\n{date_label(item.batch.start)} — {date_label(item.batch.end)}\nСчёт №{inv.pk}, версия {inv.version}\nИтого: {inv.total:,.2f} ₽{replacement}"
             if item.purpose == "preview" and inv.errors:
                 caption += "\nЕсть замечания. Исправьте их на сайте перед подтверждением."
             markup = payment_keyboard(inv, item.recipient) if item.purpose == "owner" else None
@@ -66,7 +67,7 @@ async def deliver_once(bot):
             result = await bot.send_document(item.recipient, BufferedInputFile(bytes(inv.artifact), filename=f"invoice-{inv.pk}-v{inv.version}.xlsx"), caption=caption, reply_markup=markup)
         else:
             invoices = await sync_to_async(list)(item.batch.invoices.all())
-            lines = [f"Пакет №{item.batch_id}, версия {item.version}", f"{item.batch.start:%d.%m.%Y} — {item.batch.end:%d.%m.%Y}"]
+            lines = [f"Пакет №{item.batch_id}, версия {item.version}", f"{date_label(item.batch.start)} — {date_label(item.batch.end)}"]
             for inv in invoices:
                 lines.append(f"{inv.organization_name}: {inv.total:,.2f} ₽ → {', '.join(str(x) for x in inv.recipients) or 'получатель не назначен'}")
             lines.append("Проверьте все файлы. После подтверждения счета отправятся владельцам.")

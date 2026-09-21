@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { dateLabel, dateTimeLabel } from "./date-format";
 import type { Bootstrap, Item } from "./accounting-types";
 
 const fields: Record<string, string> = {
@@ -25,9 +26,7 @@ const actions: Record<string, string> = {create: "Создание", update: "И
 
 function timestamp(value: string) {
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? "Время не указано" : new Intl.DateTimeFormat("ru-RU", {
-    dateStyle: "medium", timeStyle: "medium", timeZone: "Asia/Yekaterinburg",
-  }).format(date);
+  return Number.isNaN(date.getTime()) ? "Время не указано" : dateTimeLabel(value);
 }
 
 export default function HistoryDialog({record, data, onClose}: {record:Item;data:Bootstrap|null;onClose:()=>void}) {
@@ -66,7 +65,7 @@ export default function HistoryDialog({record, data, onClose}: {record:Item;data
     if (["employee", "employeeId"].includes(key)) return data?.employees.find(e => e.id === Number(value))?.name || `№${value}`;
     if (key === "service") return data?.services.find(s => s.id === Number(value))?.name || `№${value}`;
     if (["amount", "amountOverride"].includes(key) && Number.isFinite(Number(value))) return new Intl.NumberFormat("ru-RU", {style:"currency",currency:"RUB"}).format(Number(value));
-    if (key === "date" && /^\d{4}-\d{2}-\d{2}$/.test(String(value))) return String(value).split("-").reverse().join(".");
+    if (key === "date" && /^\d{4}-\d{2}-\d{2}$/.test(String(value))) return dateLabel(String(value));
     if (key.endsWith("_at")) return timestamp(String(value));
     if (["kind", "source", "input_type", "workType"].includes(key)) return values[String(value)] || String(value);
     return typeof value === "object" ? JSON.stringify(value) : String(value);

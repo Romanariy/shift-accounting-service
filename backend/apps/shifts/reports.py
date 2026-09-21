@@ -1,3 +1,4 @@
+from apps.shifts.dates import excel_date_format
 from calendar import month_name
 from decimal import Decimal
 
@@ -86,7 +87,7 @@ def generate_month_report(year, month):
                            shift.get_work_type_display(), shift.comment, format_money(shift.calculated_amount),
                            shift.organization.name if shift.organization_id else "Без организации"])
         append_totals(ws, 2, "F", employees)
-        style_sheet(ws, {"A": 14, "B": 14, "C": 18, "D": 24, "E": 34, "F": 16, "G": 24})
+        style_sheet(ws, {"A": 22, "B": 14, "C": 18, "D": 24, "E": 34, "F": 16, "G": 24})
 
     companion_ws = wb.create_sheet("Сопровождения")
     companion_ws.append(["Дата", "Кол-во сопровождений", "Кто", "Сумма", "Организация"])
@@ -106,7 +107,7 @@ def generate_month_report(year, month):
             ]
         )
     append_totals(companion_ws, 2, "D", employees)
-    style_sheet(companion_ws, {"A": 14, "B": 24, "C": 18, "D": 16, "E": 24})
+    style_sheet(companion_ws, {"A": 22, "B": 24, "C": 18, "D": 16, "E": 24})
 
     phone_ws = wb.create_sheet("Телефоны")
     phone_ws.append(["Дата", "Сумма"])
@@ -116,12 +117,12 @@ def generate_month_report(year, month):
     phone_ws.cell(row=total_row, column=1, value="Итоги")
     phone_ws.cell(row=total_row + 1, column=1, value="Общая сумма за месяц")
     phone_ws.cell(row=total_row + 1, column=2, value=f"=SUM(B2:B{len(month_dates) + 1})")
-    style_sheet(phone_ws, {"A": 14, "B": 16})
+    style_sheet(phone_ws, {"A": 22, "B": 16})
 
     for sheet in wb.worksheets:
         for row in sheet.iter_rows(min_row=2):
             if row and getattr(row[0].value, "year", None):
-                row[0].number_format = "DD.MM.YYYY"
+                row[0].number_format = excel_date_format(row[0].value)
 
     wb.properties.title = f"Отчет за {month_name[month]} {year}"
     return wb

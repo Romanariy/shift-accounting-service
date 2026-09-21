@@ -1,3 +1,4 @@
+from apps.shifts.dates import date_label, date_time_label, excel_date_format
 """Employee earnings from saved ledger amounts; independent of owner invoices."""
 import re
 from calendar import monthrange
@@ -68,8 +69,8 @@ def workbook_bytes(data):
     review = wb.create_sheet("На проверку")
     for ws in (main, review):
         ws.append(["Главный отчёт · все организации"])
-        ws.append(["Период", f'{data["start"]} — {data["end"]}'])
-        ws.append(["Сформирован (Екатеринбург)", data["generated_at"]])
+        ws.append(["Период", f'{date_label(data["start"])} — {date_label(data["end"])}'])
+        ws.append(["Сформирован (Екатеринбург)", date_time_label(data["generated_at"])])
         ws.append([])
     main.append(["Сотрудник", "Заработано, ₽"])
     for r in data["employees"]:
@@ -83,7 +84,7 @@ def workbook_bytes(data):
         for r in data[key]:
             review.append([date.fromisoformat(r["date"]), safe_text(r["organization_name"]), safe_text(r["employee_name"]), Decimal(r["amount"]), safe_text(r["reason"]), label])
         review.append([label + " — итого", None, None, Decimal(data[key + "_total"])])
-    for ws, widths in ((main, [48, 48]), (review, [18, 30, 30, 20, 55, 36])):
+    for ws, widths in ((main, [48, 48]), (review, [22, 30, 30, 20, 55, 36])):
         ws.freeze_panes = "A6"
         ws.sheet_view.showGridLines = False
         for cell in ws[5]:
@@ -95,7 +96,7 @@ def workbook_bytes(data):
             for cell in row:
                 cell.alignment = Alignment(vertical="top", wrap_text=True)
                 if isinstance(cell.value, date):
-                    cell.number_format = "DD.MM.YYYY"
+                    cell.number_format = excel_date_format(cell.value)
                 elif isinstance(cell.value, Decimal):
                     cell.number_format = '#,##0.00'
         ws.sheet_properties.pageSetUpPr.fitToPage = True

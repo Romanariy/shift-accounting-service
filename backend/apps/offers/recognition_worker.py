@@ -117,35 +117,30 @@ def finish_offer(job, images, results, result, elapsed_ms):
         current_job.save()
         return
     signature = hashlib.sha256("|".join(sorted({image.sha256 for image in images})).encode()).hexdigest()
-    previous = ShiftOffer.objects.filter(sender_id=offer.sender_id, source_signature=signature).exclude(pk=offer.pk).exclude(state__in=("cancelled", "duplicate", "failed")).first()
     before = snapshot(offer)
     offer.source_signature = signature
-    if previous:
-        offer.state, offer.duplicate_of, offer.closed_at = "duplicate", previous, timezone.now()
-        changed(offer, "duplicate_detected", "system", before)
-        from .service import enqueue
-        enqueue(offer, "notice", offer.sender_id)
-    else:
-        for image, recognized in zip(images, results):
-            image.recognized = recognized
-            image.save(update_fields=("recognized",))
-        offer.date = result["date"]
-        offer.organization_id = result["organization"]
-        offer.intervals, offer.questions, offer.evidence = result["intervals"], result["questions"], result["evidence"]
-        offer.evidence["elapsed_ms"] = elapsed_ms
-        if offer.organization_id not in allowed_organizations(offer.sender_id):
-            offer.organization_id = None
-            if not any(q["key"] == "organization" for q in offer.questions):
-                offer.questions.insert(0, {"key": "organization", "label": "Нет права на найденную организацию. Выберите разрешённую.", "type": "organization"})
-        recompute(offer)
-        offer.state = "needs_input" if offer.questions else "review"
-        changed(offer, "recognized", "ocr", before)
-        if not offer.questions and quality_gate():
-            try:
-                publish(offer.pk, user_id=offer.sender_id, version=offer.version)
-            except Exception:
-                prompt(offer)
-        else:
+    # An identical old screenshot may be a real reversion after an approved update.
+    # Compare current schedule semantics, never short-circuit by a historical file hash.
+    for image, recognized in zip(images, results):
+        image.recognized = recognized
+        image.save(update_fields=("recognized",))
+    offer.date = result["date"]
+    offer.organization_id = result["organization"]
+    offer.intervals, offer.questions, offer.evidence = result["intervals"], result["questions"], result["evidence"]
+    offer.evidence["elapsed_ms"] = elapsed_ms
+    if offer.organization_id not in allowed_organizations(offer.sender_id):
+        offer.organization_id = None
+        if not any(q["key"] == "organization" for q in offer.questions):
+            offer.questions.insert(0, {"key": "organization", "label": "Нет права на найденную организацию. Выберите разрешённую.", "type": "organization"})
+    recompute(offer)
+    offer.state = "needs_input" if offer.questions else "review"
+    changed(offer, "recognized", "ocr", before)
+    if not offer.questions and quality_gate():
+        try:
+            publish(offer.pk, user_id=offer.sender_id, version=offer.version)
+        except Exception:
             prompt(offer)
+    else:
+        prompt(offer)
     current_job.state, current_job.elapsed_ms = "done", elapsed_ms
     current_job.save()

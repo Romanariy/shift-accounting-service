@@ -8,7 +8,7 @@ from django.db import transaction
 
 from apps.ledger.engine import lock
 from . import service
-from .models import OfferDelivery, ShiftOffer
+from .models import OfferDelivery, ShiftOffer, OfferImage
 from .storage import remove_image, store_image
 
 
@@ -25,7 +25,9 @@ def callback_action(data, user_id, chat_id, message_id):
     _, action, offer_id, version = parts[:4]
     offer = ShiftOffer.objects.get(pk=int(offer_id))
     service.require_current(offer, int(version))
-    deliveries = [d for d in offer.deliveries.filter(recipient=chat_id, state="sent") if message_id in d.message_ids]
+    deliveries = [d for d in offer.deliveries.filter(recipient=chat_id, state="sent", deleted_at=None, delete_requested=False)
+                  if message_id in d.message_ids and (d.purpose not in service.ACTIVE_PURPOSES | service.CLAIMED_PURPOSES
+                  or d.generation == offer.delivery_generation)]
     if not deliveries:
         raise ValidationError("Откройте исходное сообщение бота.")
     if action == "claim":
@@ -41,6 +43,17 @@ def callback_action(data, user_id, chat_id, message_id):
         service.release(offer.pk, user_id=user_id, version=int(version))
         return "Сотрудник снят. Смена снова доступна в топике."
     service.authorize_edit(offer, user_id)
+    if action in ("utarget", "umode", "uapply", "uescalate"):
+        from . import updates
+        if action == "utarget" and len(parts) == 5:
+            updates.choose(offer.pk, int(parts[4]), user_id=user_id, version=int(version))
+        elif action == "umode" and len(parts) == 5:
+            updates.choose(offer.pk, offer.update_target_id, parts[4], user_id=user_id, version=int(version))
+        elif action == "uapply":
+            updates.apply(offer.pk, user_id=user_id, version=int(version))
+        elif action == "uescalate":
+            updates.escalate(offer.pk, user_id=user_id, version=int(version))
+        return "Обновление обработано. Проверьте сообщение бота."
     if action == "publish":
         service.publish(offer.pk, user_id=user_id, version=int(version))
         return "Публикация поставлена в очередь."
@@ -50,6 +63,8 @@ def callback_action(data, user_id, chat_id, message_id):
     if offer.state not in ("review", "needs_input", "failed"):
         raise ValidationError("Редактирование через бота доступно до публикации.")
     if action == "edit":
+        if offer.kind == "service":
+            return "Исправьте предложение на сайте или отмените его и создайте заново через /offer."
         service.enqueue(offer, "edit_menu", user_id)
         return "Выберите поле в новом сообщении."
     if action == "field" and len(parts) == 5 and parts[4] in ("date", "organization", "start_time", "end_time", "comment"):
@@ -96,6 +111,9 @@ async def process_private(message, bot):
     if message.chat.type != "private" or not message.from_user:
         return False
     try:
+        from . import wizard, manual
+        if message.text and await sync_to_async(wizard.consume)(message.from_user.id, message.from_user.full_name, message.message_id, message.text):
+            return True
         if message.text and message.reply_to_message:
             found = await sync_to_async(reply_to_question)(message.from_user.id, message.reply_to_message.message_id, message.text)
             if found:
@@ -106,6 +124,9 @@ async def process_private(message, bot):
         if not file:
             return False
         await sync_to_async(service.authorize_sender)(message.from_user.id)
+        if await sync_to_async(OfferImage.objects.filter(offer__sender_id=message.from_user.id, message_id=message.message_id).exists)():
+            return True
+        manual_target = await sync_to_async(wizard.attachment_target)(message.from_user.id)
         if file.file_size and file.file_size > settings.OFFER_UPLOAD_BYTES:
             raise ValidationError("Фотография должна быть не больше 10 МБ.")
         # aiogram's download is bounded by Telegram file metadata and checked again before decoding.
@@ -117,8 +138,11 @@ async def process_private(message, bot):
         path, digest = await sync_to_async(store_image)(content.getvalue())
         key = f"telegram:{message.chat.id}:" + (f"album:{message.media_group_id}" if message.media_group_id else f"message:{message.message_id}")
         try:
-            await sync_to_async(service.receive_image)(message.from_user.id, message.from_user.full_name[:160], key,
-                message.message_id, path, digest, file.file_id, message.caption or "")
+            if manual_target:
+                await sync_to_async(manual.attach)(manual_target, path, digest, message.message_id, user_id=message.from_user.id, file_id=file.file_id)
+            else:
+                await sync_to_async(service.receive_image)(message.from_user.id, message.from_user.full_name[:160], key,
+                    message.message_id, path, digest, file.file_id, message.caption or "")
         except Exception:
             await sync_to_async(remove_image)(path)
             raise

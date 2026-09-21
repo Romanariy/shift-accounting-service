@@ -3,13 +3,13 @@ from functools import wraps
 
 from django.core.exceptions import ObjectDoesNotExist, ValidationError, RequestDataTooBig
 from django.db import transaction
-from django.db.models import F
+from django.db.models import F, Case, When, Value, CharField
 from django.http import FileResponse, JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
 from apps.ledger.engine import lock
-from apps.ledger.models import Settings, TelegramContact
+from apps.ledger.models import Settings, TelegramContact, Service
 from apps.shifts.audit import log_change
 from apps.shifts.models import AuditLog, Organization, Employee
 from . import service
@@ -51,10 +51,12 @@ def serialize_offer(offer, detail=False):
         "created_at": offer.created_at, "closed_at": offer.closed_at, "error": offer.error,
         "duplicate_of": offer.duplicate_of_id, "evidence": offer.evidence}
     if detail:
+        from .updates import preview
+        data["update_preview"] = preview(offer)
         data.update(images=[{"id": i.pk, "url": f"/api/shifts/ledger/offer-images/{i.pk}/" if not i.purged_at else None,
-            "purged_at": i.purged_at, "recognized": i.recognized} for i in offer.images.all()],
+            "purged_at": i.purged_at, "recognized": i.recognized, "active": i.active} for i in offer.images.all()],
             jobs=list(offer.jobs.order_by("-id").values("id", "state", "attempts", "elapsed_ms", "error")[:20]),
-            deliveries=list(offer.deliveries.order_by("id").values("id", "purpose", "recipient", "state", "message_ids", "error",
+            deliveries=list(offer.deliveries.order_by("id").values("id", "purpose", "recipient", "thread_id", "state", "message_ids", "error", "delete_requested", "deleted_at",
                 edit_state=F("offermessageedit__state"), edit_error=F("offermessageedit__error"))),
             history=list(AuditLog.objects.filter(entity_type="shift_offer", entity_id=offer.pk).order_by("-created_at", "-id")
                 .values("id", "created_at", "action", "actor", "diff")[:150]))
@@ -64,19 +66,65 @@ def serialize_offer(offer, detail=False):
 @endpoint
 def offers(request, pk=None, action=None):
     if pk is None:
-        method(request, "GET")
-        query = ShiftOffer.objects.select_related("organization").order_by("-id")
-        for field in ("state", "organization", "date"):
+        method(request, "GET", "POST")
+        if request.method == "POST":
+            from .manual import create
+            data = body(request)
+            key = str(data.get("request_key", ""))
+            if not key or len(key) > 100:
+                raise ValidationError("Нужен ключ запроса создания.")
+            return JsonResponse(serialize_offer(create(data, source_key="web:" + key), True), status=201)
+        query = ShiftOffer.objects.select_related("organization")
+        if request.GET.get("section") == "cancelled" or request.GET.get("state") == "cancelled":
+            query = query.filter(state="cancelled")
+        else:
+            query = query.exclude(state="cancelled")
+        for field in ("state", "organization", "date", "kind", "employee"):
             if request.GET.get(field):
                 query = query.filter(**{field: request.GET[field]})
+        if request.GET.get("service") == "free":
+            query = query.filter(kind="service", service__isnull=True)
+        elif request.GET.get("service"):
+            query = query.filter(service_id=int(request.GET["service"]))
+        for param, lookup in (("date_from", "date__gte"), ("date_to", "date__lte")):
+            if request.GET.get(param):
+                query = query.filter(**{lookup: request.GET[param]})
+        if request.GET.get("search"):
+            query = query.filter(service_name__icontains=request.GET["search"][:160])
+        ordering = request.GET.get("ordering", "-created_at")
+        if ordering not in ("date", "-date", "created_at", "-created_at", "service_name", "-service_name"):
+            raise ValidationError("Неизвестная сортировка.")
+        query = query.annotate(sort_name=Case(When(kind="shift", then=Value("Смена")), default=F("service_name"), output_field=CharField()))
+        query = query.order_by(ordering.replace("service_name", "sort_name"), "-id")
         offset = max(0, int(request.GET.get("offset", 0)))
         return JsonResponse({"items": [serialize_offer(o) for o in query[offset:offset + 50]], "count": query.count()})
     if request.method == "GET" and not action:
         return JsonResponse(serialize_offer(ShiftOffer.objects.select_related("organization").get(pk=pk), True))
     method(request, "POST")
+    if action == "image":
+        from django.conf import settings
+        from .manual import attach
+        upload = request.FILES.get("image")
+        if not upload or upload.size > settings.OFFER_UPLOAD_BYTES:
+            raise ValidationError("Загрузите изображение размером до 10 МБ.")
+        path, digest = store_image(upload.read())
+        try:
+            result = attach(pk, path, digest, int(request.POST["message_id"]), version=int(request.POST["version"]))
+        except Exception:
+            remove_image(path)
+            raise
+        return JsonResponse(serialize_offer(result, True))
     data = body(request)
     version = int(data["version"])
-    if action == "publish":
+    if action in ("update-choose", "update-apply", "update-escalate"):
+        from . import updates
+        if action == "update-choose":
+            result = updates.choose(pk, data["target"], data.get("mode", ""), version=version)
+        elif action == "update-apply":
+            result = updates.apply(pk, version=version)
+        else:
+            result = updates.escalate(pk, version=version)
+    elif action == "publish":
         result = service.publish(pk, version=version)
     elif action == "cancel":
         result = service.cancel(pk, version=version)
@@ -167,20 +215,21 @@ def profiles(request, organization=None, action=None):
 
 @endpoint
 def config(request):
+    from .routing import config_data, update_config, validate_routes
     method(request, "GET", "POST")
     value, _ = OfferConfig.objects.get_or_create(pk=1)
     if request.method == "POST":
-        from .routing import config_data, update_config, validate_routes
         data = body(request)
         previous = config_data(value)
         update_config(value, data)
         validate_routes(Settings.objects.get(pk=1), value)
         value.save()
         log_change("offer_config", 1, "updated", "web", before=previous, after=config_data(value))
-    return JsonResponse({"enabled": value.enabled, "chat_id": value.chat_id, "thread_id": value.thread_id,
+    return JsonResponse({**config_data(value),
         "coordinator": service.coordinator_id(), "auto_publish": service.quality_gate(),
         "workers": list(WorkerHeartbeat.objects.values("name", "updated_at", "detail")),
         "organizations": list(Organization.objects.filter(is_active=True).values("id", "name")),
+        "services": list(Service.objects.values("id", "name", "input_type", "active", "deleted_at", "default_organization")),
         "employees": [{"id": e.pk, "name": e.display_name} for e in Employee.objects.filter(is_active=True, telegram_user_id__isnull=False)],
         "contacts": list(TelegramContact.objects.values("id", "name", "user_id"))})
 

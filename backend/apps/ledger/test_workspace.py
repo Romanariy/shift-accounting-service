@@ -20,7 +20,7 @@ class WorkspaceTests(TestCase):
         self.config=Settings.objects.get(pk=1)
         self.config.approver=self.chief; self.config.service_chat=-1001; self.config.service_thread=10
         self.config.expense_chat=-1001; self.config.expense_thread=20; self.config.save()
-        self.offers=OfferConfig.objects.create(pk=1,enabled=True,chat_id=-1001,thread_id=30)
+        self.offers=OfferConfig.objects.create(pk=1,enabled=True,chat_id=-1001,thread_id=30,claimed_thread_id=40,released_thread_id=50)
         self.org=Organization.objects.first()
         self.employee=Employee.objects.create(short_name="Site name")
 

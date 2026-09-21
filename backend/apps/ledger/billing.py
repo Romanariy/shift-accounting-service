@@ -1,3 +1,4 @@
+from apps.shifts.dates import date_label, excel_date_format
 from datetime import date, timedelta
 from decimal import Decimal
 from io import BytesIO
@@ -28,7 +29,7 @@ def workbook_bytes(invoice, batch):
     wb = Workbook()
     main = wb.active
     main.title = "Основной"
-    main.append([safe_text(invoice.organization_name), f"{batch.start:%d.%m.%Y} — {batch.end:%d.%m.%Y}"])
+    main.append([safe_text(invoice.organization_name), f"{date_label(batch.start)} — {date_label(batch.end)}"])
     main.append(["Счёт", f"{invoice.pk} / версия {invoice.version}"])
     main.append(["Всего по счёту", float(invoice.total)])
     main.append([])
@@ -67,13 +68,13 @@ def workbook_bytes(invoice, batch):
         for cell in ws[header_row]:
             cell.font = Font(bold=True, color="FFFFFF")
             cell.fill = PatternFill("solid", fgColor="28756A")
-        for index, width in enumerate([15, 25, 54, 20, 22, 20], 1):
+        for index, width in enumerate([22, 25, 54, 20, 22, 20], 1):
             ws.column_dimensions[get_column_letter(index)].width = width
         for row in ws:
             for cell in row:
                 cell.alignment = Alignment(vertical="top", wrap_text=True)
                 if isinstance(cell.value, date):
-                    cell.number_format = "DD.MM.YYYY"
+                    cell.number_format = excel_date_format(cell.value)
                 elif isinstance(cell.value, (float, int)):
                     cell.number_format = '#,##0.00'
         ws.print_options.horizontalCentered = True

@@ -1,4 +1,5 @@
 "use client";
+import { dateLabel, dateTimeLabel } from "../date-format";
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
@@ -690,7 +691,7 @@ export default function ShiftDashboard() {
             </div>
             {tableEntries.map((entry) => (
               <div className="shift-table__row" key={`${entry.kind}-${entry.id}`}>
-                <span>{entry.date}</span>
+                <span>{dateLabel(entry.date)}</span>
                 <span>{entry.employeeName || "Не назначен"}</span>
                 <span>{entry.organizationName || "Без организации"}</span>
                 <span>
@@ -853,7 +854,7 @@ export default function ShiftDashboard() {
           <div className="shift-chip-list">
             {payRules.map((rule) => (
               <button className="shift-chip" key={rule.id} type="button" onClick={() => editPayRule(rule)}>
-                {organizations.find((org) => org.id === rule.organizationId)?.name ?? "Общий"} · {rule.title}: {rule.hourlyRate ? `${rule.hourlyRate}/ч` : rule.fixedAmount} · с {rule.activeFrom}{rule.isActive ? "" : " (отключён)"}
+                {organizations.find((org) => org.id === rule.organizationId)?.name ?? "Общий"} · {rule.title}: {rule.hourlyRate ? `${rule.hourlyRate}/ч` : rule.fixedAmount} · с {dateLabel(rule.activeFrom)}{rule.isActive ? "" : " (отключён)"}
               </button>
             ))}
           </div>
@@ -868,7 +869,7 @@ export default function ShiftDashboard() {
             {auditLog.map((item) => (
               <article key={item.id}>
                 <strong>{item.action}</strong>
-                <span>{new Date(item.createdAt).toLocaleString("ru-RU")}</span>
+                <span>{dateTimeLabel(item.createdAt)}</span>
                 <code>{Object.keys(item.diff).join(", ") || "без изменений"}</code>
               </article>
             ))}

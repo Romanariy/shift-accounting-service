@@ -48,7 +48,7 @@ class Fixture:
         config, _ = Settings.objects.get_or_create(pk=1)
         config.approver = self.chief
         config.save()
-        OfferConfig.objects.create(pk=1, chat_id=-100123, thread_id=77, enabled=True)
+        OfferConfig.objects.create(pk=1, chat_id=-100123, thread_id=77, claimed_thread_id=78, released_thread_id=79, enabled=True)
         self.profile = RecognitionProfile.objects.create(organization=self.org, rooms=[{"name":"БОХО","aliases":[]}], confirmed=True)
         self.profile.publishers.add(self.contact)
         self.employee = Employee.objects.create(short_name="OCR Employee", telegram_user_id=90003)
@@ -117,7 +117,7 @@ class OfferFlowTests(Fixture, TestCase):
         offer=self.offer("open")
         claimed=service.claim(offer.pk,90003,offer.version)
         self.assertEqual(claimed.employee,self.employee)
-        self.assertEqual(set(claimed.deliveries.values_list("recipient",flat=True)),{90001,90003})
+        self.assertEqual(set(claimed.deliveries.filter(purpose="assignment").values_list("recipient",flat=True)),{90001,90003})
         with self.assertRaises(ValidationError): service.release(offer.pk,user_id=90002)
         with self.assertRaises(ValidationError): service.claim(offer.pk,90003,offer.version)
         service.release(offer.pk,user_id=90003,version=claimed.version)
@@ -414,7 +414,7 @@ class DeliveryIntegrationTests(Fixture, TestCase):
     def bot(self):
         return SimpleNamespace(send_photo=AsyncMock(return_value=SimpleNamespace(message_id=50)),
             send_media_group=AsyncMock(return_value=[SimpleNamespace(message_id=50),SimpleNamespace(message_id=51)]),
-            send_message=AsyncMock(return_value=SimpleNamespace(message_id=52)),edit_message_text=AsyncMock())
+            send_message=AsyncMock(return_value=SimpleNamespace(message_id=52)),edit_message_text=AsyncMock(),delete_message=AsyncMock(),edit_message_reply_markup=AsyncMock())
 
     def test_receive_recognize_confirm_publish_take_release_without_network(self):
         from .recognition_worker import run_once as recognize
@@ -432,16 +432,16 @@ class DeliveryIntegrationTests(Fixture, TestCase):
         review=offer.deliveries.get(purpose="review")
         self.assertEqual(review.state,"sent")
         callback_action(f"offer:publish:{offer.pk}:{offer.version}",90002,90002,52)
-        for _ in range(8): async_to_sync(deliver)(bot)
+        for _ in range(25): async_to_sync(deliver)(bot)
         offer.refresh_from_db(); self.assertEqual(offer.state,"open")
         self.assertEqual(bot.send_photo.await_count,1)
         callback_action(f"offer:claim:{offer.pk}:{offer.version}",90003,-100123,52)
-        for _ in range(8): async_to_sync(deliver)(bot)
+        for _ in range(25): async_to_sync(deliver)(bot)
         offer.refresh_from_db(); self.assertEqual(offer.state,"claimed")
         assignment=offer.deliveries.get(purpose="assignment",recipient=90003)
         self.assertEqual(assignment.state,"sent")
         callback_action(f"offer:release:{offer.pk}:{offer.version}",90003,90003,52)
-        for _ in range(8): async_to_sync(deliver)(bot)
+        for _ in range(25): async_to_sync(deliver)(bot)
         offer.refresh_from_db(); self.assertEqual(offer.state,"open")
         self.assertEqual(Record.objects.count(),0)
 

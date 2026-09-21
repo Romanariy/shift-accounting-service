@@ -1,3 +1,4 @@
+from apps.shifts.dates import date_label
 from dataclasses import dataclass
 
 from django.conf import settings
@@ -153,7 +154,7 @@ def ingest_telegram_message(
         shift=shift,
         companion=companion,
         message=(
-            f"Записал: {entry.date:%d.%m.%Y}, {entry.employee_name_snapshot or 'без сотрудника'}, "
+            f"Записал: {date_label(entry.date)}, {entry.employee_name_snapshot or 'без сотрудника'}, "
             f"{entry.organization.name}, {description}, сумма {total} руб.{companion_note}.{review_note}"
         ),
         needs_review=status == EntryStatus.NEEDS_REVIEW,

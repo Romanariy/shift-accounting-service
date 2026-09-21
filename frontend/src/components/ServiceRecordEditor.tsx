@@ -1,4 +1,5 @@
 "use client";
+import { dateLabel } from "./date-format";
 
 import { FormEvent, useEffect, useRef, useState } from "react";
 import SharedShiftDetails from "./SharedShiftDetails";
@@ -95,7 +96,7 @@ export default function ServiceRecordEditor({editor,data,busy,error,onClose,onSa
     <div className="dialog-heading"><div><span className="eyebrow">СВОД / ЖУРНАЛ</span><h2>{editor.title}</h2></div><button type="button" className="icon-button" onClick={onClose} aria-label="Закрыть">×</button></div>
     {error&&<div role="alert" className="alert">{error}</div>}
     <div className="form-grid">
-      <label><span>Дата *</span><input aria-label="Дата" type="date" required value={values.date||""} onChange={e=>change("date",e.target.value)}/></label>
+      <label><span>Дата *</span><input aria-label="Дата" type="date" required value={values.date||""} onChange={e=>change("date",e.target.value)}/>{values.date&&<small>{dateLabel(values.date)}</small>}</label>
       <label><span>Организация *</span><select aria-label="Организация услуги" required value={values.organization||""} onChange={e=>change("organization",e.target.value)}><option value="">Не выбрано</option>{organizations.map(item=><option key={item.id} value={item.id}>{item.name}{!item.active&&" (архив)"}</option>)}</select></label>
       <label><span>Исполнитель</span><select aria-label="Исполнитель" value={values.employee||""} onChange={e=>change("employee",e.target.value)}><option value="">Без исполнителя</option>{employees.map(item=><option key={item.id} value={item.id}>{item.name}{!item.active&&" (архив)"}</option>)}</select></label>
       <label><span>Услуга *</span><select aria-label="Услуга" required value={values.service||""} onChange={e=>change("service",e.target.value)}><option value="">Не выбрано</option>{services.map(item=><option key={item.id} value={item.id}>{item.name}{!item.active&&" (архив)"}</option>)}</select></label>

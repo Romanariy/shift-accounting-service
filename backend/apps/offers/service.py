@@ -18,10 +18,14 @@ from .models import (OfferConfig, OfferDelivery, OfferImage, OfferMessageEdit,
                      RecognitionJob, RecognitionProfile, ShiftOffer)
 from .storage import remove_image
 
-TERMINAL = {"completed", "expired", "cancelled", "duplicate"}
+TERMINAL = {"completed", "expired", "cancelled", "duplicate", "applied"}
+PHOTO_PURPOSES = {"photos", "claimed_photos", "assignment_photos"}
+ACTIVE_PURPOSES = {"photos", "topic"}
+CLAIMED_PURPOSES = {"claimed_photos", "claimed_topic", "assignment", "assignment_photos"}
 STATE_LABELS = {"collecting": "Получаем фото", "processing": "Распознаём", "needs_input": "Нужно уточнить",
     "review": "Подтвердите результат", "publishing": "Публикуется", "open": "Свободна", "claimed": "Занята",
     "completed": "Завершена", "expired": "Не была взята", "cancelled": "Отменена", "failed": "Ошибка", "duplicate": "Повтор"}
+STATE_LABELS.update(update_review="Проверить изменения", applied="Обновление применено", composing="Заполняется")
 
 
 def coordinator_id():
@@ -52,7 +56,11 @@ def authorize_edit(offer, user_id):
 
 
 def snapshot(offer):
-    return {"state": offer.state, "date": offer.date, "organization": offer.organization_id,
+    return {"kind": offer.kind, "service": offer.service_id, "service_name": offer.service_name,
+            "input_type": offer.input_type, "units": offer.units, "amount": offer.amount,
+            "update_target": offer.update_target_id, "update_target_version": offer.update_target_version,
+            "update_mode": offer.update_mode,
+            "state": offer.state, "date": offer.date, "organization": offer.organization_id,
             "start_time": offer.start_time, "end_time": offer.end_time, "employee": offer.employee_id,
             "employee_name": offer.employee_name, "comment": offer.comment, "version": offer.version,
             "intervals": deepcopy(offer.intervals), "questions": deepcopy(offer.questions), "author": offer.sender_id}
@@ -62,20 +70,75 @@ def changed(offer, action, actor, before=None):
     offer.version += 1
     offer.save()
     log_change("shift_offer", offer.pk, action, actor=actor, before=before, after=snapshot(offer))
-    for delivery in offer.deliveries.filter(state="sent").exclude(purpose="photos"):
-        edit, _ = OfferMessageEdit.objects.get_or_create(delivery=delivery, defaults={"available_at": timezone.now()})
-        edit.revision += 1
-        edit.state, edit.available_at, edit.error = "pending", timezone.now(), ""
-        edit.save()
+    for delivery in offer.deliveries.filter(deleted_at=None):
+        reconcile_message(delivery, offer)
 
 
-def enqueue(offer, purpose, recipient, *, thread_id=None, suffix="", prompt_key=""):
-    return OfferDelivery.objects.get_or_create(key=f"{offer.pk}:{offer.version}:{purpose}:{recipient}:{suffix}",
-        defaults={"offer": offer, "purpose": purpose, "recipient": recipient, "thread_id": thread_id,
-                  "version": offer.version, "prompt_key": prompt_key, "available_at": timezone.now()})[0]
+def obsolete(delivery, offer):
+    if delivery.purpose in ACTIVE_PURPOSES:
+        return delivery.generation != offer.delivery_generation or offer.state not in ("publishing", "open")
+    if delivery.purpose in CLAIMED_PURPOSES:
+        return delivery.generation != offer.delivery_generation or offer.state not in ("claimed", "completed")
+    return delivery.purpose == "released"  # Superseded legacy private release notifications.
+
+
+def reconcile_message(delivery, offer):
+    """Also mark in-flight sends: once their IDs arrive they must be deleted, never resurrected."""
+    if obsolete(delivery, offer):
+        delivery.delete_requested = True
+        if delivery.state in ("pending", "failed") and not delivery.message_ids:
+            delivery.state = "cancelled"
+        delivery.save(update_fields=("delete_requested", "state"))
+    if delivery.state != "sent" or delivery.deleted_at:
+        return
+    if not delivery.delete_requested and (delivery.purpose in PHOTO_PURPOSES or delivery.purpose in ("release_notice", "update_notice", "wizard")):
+        return
+    edit, _ = OfferMessageEdit.objects.get_or_create(delivery=delivery, defaults={"available_at": timezone.now()})
+    edit.revision += 1
+    edit.state, edit.available_at, edit.error = "pending", timezone.now(), ""
+    edit.save()
+
+
+def enqueue(offer, purpose, recipient, *, thread_id=None, suffix="", prompt_key="", payload=None):
+    if purpose in PHOTO_PURPOSES:
+        ids = list(dict((digest, pk) for pk, digest in offer.images.filter(active=True, purged_at=None).values_list("id", "sha256")).values())
+        if not ids:
+            return None
+        payloads = [{"image_ids": ids[i:i + 10]} for i in range(0, len(ids), 10)]
+    else:
+        payloads = [payload or {}]
+    deliveries = []
+    for index, item in enumerate(payloads):
+        tail = suffix if index == 0 else f"{suffix}:part:{index}"
+        deliveries.append(OfferDelivery.objects.get_or_create(key=f"{offer.pk}:{offer.version}:{purpose}:{recipient}:{tail}",
+            defaults={"offer": offer, "purpose": purpose, "recipient": recipient, "thread_id": thread_id,
+                      "version": offer.version, "generation": offer.delivery_generation, "payload": item,
+                      "prompt_key": prompt_key, "available_at": timezone.now()})[0])
+    return deliveries[0]
+
+
+def publication_config(require_enabled=True):
+    from .routing import validate_routes
+    config, _ = OfferConfig.objects.get_or_create(pk=1)
+    if require_enabled and not config.enabled:
+        raise ValidationError("Приём и публикация предложений выключены.")
+    if any(value is None for value in (config.chat_id, config.thread_id, config.claimed_thread_id, config.released_thread_id)):
+        raise ValidationError("Настройте топики активных и взятых смен и уведомлений об освобождении на сайте.")
+    validate_routes(Settings.objects.get(pk=1), config)
+    return config
+
+
+def enqueue_active(offer):
+    enqueue(offer, "photos", offer.topic_chat_id, thread_id=offer.topic_thread_id)
+    enqueue(offer, "topic", offer.topic_chat_id, thread_id=offer.topic_thread_id)
 
 
 def prompt(offer):
+    from .updates import prepare
+    prepare(offer)
+    if offer.state in ("update_review", "duplicate"):
+        enqueue(offer, "update_review" if offer.state == "update_review" else "notice", offer.sender_id)
+        return
     purpose = "question" if offer.questions else "review"
     key = offer.questions[0]["key"] if offer.questions else ""
     enqueue(offer, purpose, offer.sender_id, prompt_key=key)
@@ -112,6 +175,8 @@ def receive_image(user_id, sender_name, source_key, message_id, path, sha256, fi
 
 
 def end_at(offer):
+    if offer.kind == "service" and offer.date and not offer.start_time and not offer.end_time:
+        return timezone.make_aware(datetime.combine(offer.date + timedelta(days=1), time.min))
     if not (offer.date and offer.start_time and offer.end_time):
         return None
     day = offer.date + timedelta(days=int(offer.end_time < offer.start_time))
@@ -126,6 +191,15 @@ def require_current(offer, version):
 def validate_publish(offer):
     if offer.questions:
         raise ValidationError("Сначала ответьте на вопросы распознавания.")
+    if offer.kind == "service":
+        if not offer.organization_id or not offer.date or not offer.service_name:
+            raise ValidationError("Укажите организацию, дату и услугу.")
+        if not offer.organization.is_active or not end_at(offer) or end_at(offer) <= timezone.now():
+            raise ValidationError("Предложение на прошедшее время или неактивную организацию.")
+        if offer.start_time and timezone.make_aware(datetime.combine(offer.date, offer.start_time)) <= timezone.now():
+            raise ValidationError("Начало услуги уже прошло.")
+        authorize_sender(offer.sender_id, offer.organization_id)
+        return
     if not offer.organization_id or not offer.date or not offer.start_time or not offer.end_time:
         raise ValidationError("Нужны организация, дата, начало и окончание.")
     if not offer.organization.is_active or offer.start_time >= offer.end_time:
@@ -145,14 +219,16 @@ def publish(offer_id, *, user_id=None, version=None):
     if offer.state not in ("review", "needs_input"):
         raise ValidationError("Это предложение уже опубликовано или закрыто.")
     validate_publish(offer)
-    config, _ = OfferConfig.objects.get_or_create(pk=1)
-    if not config.enabled or config.chat_id is None or config.thread_id is None or not coordinator_id():
-        raise ValidationError("Настройте главный контакт и отдельный топик предложений на сайте.")
+    from .updates import prepare
+    if prepare(offer):
+        prompt(offer)
+        return offer
+    config = publication_config()
     before = snapshot(offer)
     offer.state, offer.topic_chat_id, offer.topic_thread_id = "publishing", config.chat_id, config.thread_id
+    offer.delivery_generation += 1
     changed(offer, "publish_requested", f"telegram:{user_id}" if user_id else "web", before)
-    enqueue(offer, "photos", config.chat_id, thread_id=config.thread_id)
-    enqueue(offer, "topic", config.chat_id, thread_id=config.thread_id)
+    enqueue_active(offer)
     return offer
 
 
@@ -167,18 +243,28 @@ def claim(offer_id, user_id, version=None, actor=None):
     if len(employees) != 1:
         raise ValidationError("Администратор должен привязать ваш Telegram ID к одному активному сотруднику.")
     employee = employees[0]
-    start = timezone.make_aware(datetime.combine(offer.date, offer.start_time))
-    for other in ShiftOffer.objects.filter(employee=employee, state="claimed"):
-        other_start = timezone.make_aware(datetime.combine(other.date, other.start_time))
-        if start < end_at(other) and other_start < end_at(offer):
-            raise ValidationError(f"Пересечение со взятой сменой №{other.pk}. Сначала снимитесь с неё.")
+    config = publication_config(require_enabled=False)
+    check_overlap(offer, employee)
     before = snapshot(offer)
     offer.state, offer.employee, offer.employee_name, offer.assignee_user_id = "claimed", employee, employee.display_name, user_id
+    offer.delivery_generation += 1
     changed(offer, "claimed", actor or f"telegram:{user_id}", before)
-    enqueue(offer, "assignment", user_id)
-    if coordinator_id() and coordinator_id() != user_id:
-        enqueue(offer, "assignment", coordinator_id())
+    enqueue(offer, "claimed_photos", config.chat_id, thread_id=config.claimed_thread_id)
+    enqueue(offer, "claimed_topic", config.chat_id, thread_id=config.claimed_thread_id)
+    for recipient in {user_id, coordinator_id()} - {None}:
+        enqueue(offer, "assignment_photos", recipient)
+        enqueue(offer, "assignment", recipient)
     return offer
+
+
+def check_overlap(offer, employee):
+    if not offer.start_time or not offer.end_time:
+        return
+    start = timezone.make_aware(datetime.combine(offer.date, offer.start_time))
+    for other in ShiftOffer.objects.filter(employee=employee, state="claimed", start_time__isnull=False, end_time__isnull=False).exclude(pk=offer.pk):
+        other_start = timezone.make_aware(datetime.combine(other.date, other.start_time))
+        if start < end_at(other) and other_start < end_at(offer):
+            raise ValidationError(f"Пересечение со взятым предложением №{other.pk}. Сначала устраните пересечение.")
 
 
 @transaction.atomic
@@ -190,12 +276,23 @@ def release(offer_id, *, user_id=None, version=None):
         raise ValidationError("Снять сотрудника может он сам или главный администратор.")
     if offer.state != "claimed" or end_at(offer) <= timezone.now():
         raise ValidationError("Смена уже свободна или завершена.")
-    previous = offer.assignee_user_id
+    previous_name = offer.employee_name
     before = snapshot(offer)
     offer.state, offer.employee, offer.employee_name, offer.assignee_user_id = "open", None, "", None
+    offer.delivery_generation += 1
+    config = OfferConfig.objects.filter(pk=1).first()
+    # Releasing must remain possible even when intake is disabled. Preserve the original
+    # active route if settings were cleared after this offer was published.
+    if config and config.chat_id and config.thread_id:
+        offer.topic_chat_id, offer.topic_thread_id = config.chat_id, config.thread_id
     changed(offer, "released", f"telegram:{user_id}" if user_id else "web", before)
-    for recipient in {previous, coordinator_id()} - {None}:
-        enqueue(offer, "released", recipient)
+    if offer.topic_chat_id and offer.topic_thread_id:
+        enqueue_active(offer)
+    if config and config.chat_id and config.released_thread_id:
+        from .presentation import describe
+        enqueue(offer, "release_notice", config.chat_id, thread_id=config.released_thread_id,
+                payload={"text": "Предложение освободилось\n" + describe(offer) +
+                         f"\nСнят сотрудник: {previous_name}\nПредложение возвращено в активные."})
     return offer
 
 
@@ -236,6 +333,11 @@ def answer(offer_id, answers, *, user_id=None, version=None):
     offer = ShiftOffer.objects.get(pk=offer_id)
     authorize_edit(offer, user_id)
     require_current(offer, version)
+    if offer.kind == "service":
+        from .manual import edit
+        result = edit(offer_id, answers, user_id=user_id, version=version)
+        prompt(result)
+        return result
     if offer.state not in ("needs_input", "review", "failed"):
         raise ValidationError("Ответить можно до публикации предложения.")
     if not isinstance(answers, dict):
@@ -296,6 +398,9 @@ def edit_published(offer_id, payload, version=None):
     lock()
     offer = ShiftOffer.objects.get(pk=offer_id)
     require_current(offer, version)
+    if offer.kind == "service":
+        from .manual import edit
+        return edit(offer_id, payload, version=version)
     if offer.state not in ("open", "claimed"):
         raise ValidationError("Редактирование доступно для открытой или занятой смены.")
     # Significant changes invalidate the assignment, rather than silently changing an employee's commitment.
@@ -350,6 +455,8 @@ def split_offer(offer_id, groups, version=None):
 def retry_recognition(offer_id):
     lock()
     offer = ShiftOffer.objects.get(pk=offer_id)
+    if offer.kind != "shift":
+        raise ValidationError("Вложения услуги не являются расписанием.")
     if offer.state not in ("failed", "needs_input", "review") or not offer.images.filter(purged_at=None).exists():
         raise ValidationError("Повтор доступен до публикации, пока сохранены фотографии.")
     before = snapshot(offer)
@@ -383,7 +490,7 @@ def expire_offers():
             offer.state, offer.closed_at = ("completed" if offer.employee_id else "expired"), now
             changed(offer, "closed", "system", before)
     # Abandoned private drafts cannot retain photos indefinitely.
-    for offer in ShiftOffer.objects.filter(state__in=("collecting", "processing", "needs_input", "review", "failed"),
+    for offer in ShiftOffer.objects.filter(state__in=("composing", "collecting", "processing", "needs_input", "review", "update_review", "failed"),
             updated_at__lt=now - timedelta(days=30)):
         before = snapshot(offer)
         offer.state, offer.closed_at = "cancelled", now
