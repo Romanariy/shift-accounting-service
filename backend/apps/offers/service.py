@@ -244,7 +244,6 @@ def claim(offer_id, user_id, version=None, actor=None):
         raise ValidationError("Администратор должен привязать ваш Telegram ID к одному активному сотруднику.")
     employee = employees[0]
     config = publication_config(require_enabled=False)
-    check_overlap(offer, employee)
     before = snapshot(offer)
     offer.state, offer.employee, offer.employee_name, offer.assignee_user_id = "claimed", employee, employee.display_name, user_id
     offer.delivery_generation += 1
@@ -255,16 +254,6 @@ def claim(offer_id, user_id, version=None, actor=None):
         enqueue(offer, "assignment_photos", recipient)
         enqueue(offer, "assignment", recipient)
     return offer
-
-
-def check_overlap(offer, employee):
-    if not offer.start_time or not offer.end_time:
-        return
-    start = timezone.make_aware(datetime.combine(offer.date, offer.start_time))
-    for other in ShiftOffer.objects.filter(employee=employee, state="claimed", start_time__isnull=False, end_time__isnull=False).exclude(pk=offer.pk):
-        other_start = timezone.make_aware(datetime.combine(other.date, other.start_time))
-        if start < end_at(other) and other_start < end_at(offer):
-            raise ValidationError(f"Пересечение со взятым предложением №{other.pk}. Сначала устраните пересечение.")
 
 
 @transaction.atomic

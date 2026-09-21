@@ -136,8 +136,6 @@ def apply(pk, *, user_id=None, version=None):
         raise ValidationError("Нельзя применить расписание на прошедшее время.")
     if target.state in ("review", "publishing"):
         service.validate_publish(target)
-    if target.employee_id:
-        service.check_overlap(target, target.employee)
     # Each row owns its own file; purging the source draft cannot remove current photos.
     if draft.update_mode == "replace":
         target.images.update(active=False)

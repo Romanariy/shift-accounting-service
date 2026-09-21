@@ -89,13 +89,14 @@ class ServicesAndUpdatesTests(Fixture, TestCase):
         claimed.refresh_from_db(); other.refresh_from_db()
         self.assertEqual((claimed.state,other.state),("completed","expired"))
 
-    def test_service_day_does_not_block_shift_and_overlap_does(self):
+    def test_service_day_and_timed_overlap_are_allowed(self):
         offer=self.make(); service.publish(offer.pk); self.drain(); offer.refresh_from_db()
         service.claim(offer.pk,90003,offer.version)
         shift=self.offer(state="open"); service.claim(shift.pk,90003,shift.version)
         timed=self.make(input_type="time",start_time="14:00",end_time="15:00")
         service.publish(timed.pk); self.drain(); timed.refresh_from_db()
-        with self.assertRaises(ValidationError): service.claim(timed.pk,90003,timed.version)
+        timed=service.claim(timed.pk,90003,timed.version)
+        self.assertEqual((timed.state,timed.employee_id),("claimed",self.employee.pk))
 
     def test_manual_attachment_never_queues_recognition(self):
         offer=self.make()
@@ -157,7 +158,7 @@ class ServicesAndUpdatesTests(Fixture, TestCase):
         service.purge_images()
         self.assertTrue(media_path(target.images.get(active=True).path).exists())
 
-    def test_stale_update_and_new_overlap_are_blocked_atomically(self):
+    def test_stale_update_is_blocked_but_new_overlap_is_allowed(self):
         target,draft=self.pair(claimed=True)
         selected=updates.choose(draft.pk,target.pk,"replace",user_id=90002,version=draft.version)
         service.changed(target,"edited","web")
@@ -166,9 +167,11 @@ class ServicesAndUpdatesTests(Fixture, TestCase):
         selected=updates.choose(draft.pk,target.pk,"replace",user_id=90002,version=draft.version)
         conflict=self.offer(state="claimed",employee=self.employee,assignee_user_id=90003)
         conflict.start_time=time(12);conflict.end_time=time(13);conflict.save()
-        with self.assertRaises(ValidationError): updates.apply(draft.pk,user_id=90002,version=selected.version)
-        target.refresh_from_db(); self.assertEqual(target.start_time,time(13))
-        self.assertFalse(target.deliveries.filter(purpose="update_notice").exists())
+        result=updates.apply(draft.pk,user_id=90002,version=selected.version)
+        target.refresh_from_db()
+        self.assertEqual((target.start_time,target.end_time),(time(12,30),time(15)))
+        self.assertTrue(target.deliveries.filter(purpose="update_notice").exists())
+        self.assertEqual(result.state,"applied")
 
     def test_different_owner_escalates_to_chief(self):
         target,draft=self.pair(); target.sender_id=90001;target.save()

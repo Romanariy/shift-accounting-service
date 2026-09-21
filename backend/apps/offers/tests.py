@@ -133,10 +133,12 @@ class OfferFlowTests(Fixture, TestCase):
         Employee.objects.create(short_name="Duplicate Telegram",telegram_user_id=90003)
         with self.assertRaises(ValidationError): service.claim(offer.pk,90003)
 
-    def test_overlapping_assignments_rejected(self):
+    def test_overlapping_assignments_are_allowed(self):
         first=self.offer("open"); second=self.offer("open")
-        service.claim(first.pk,90003)
-        with self.assertRaises(ValidationError): service.claim(second.pk,90003)
+        first=service.claim(first.pk,90003)
+        second=service.claim(second.pk,90003)
+        self.assertEqual((first.state,second.state),("claimed","claimed"))
+        self.assertEqual((first.employee_id,second.employee_id),(self.employee.pk,self.employee.pk))
 
     def test_active_assignment_cannot_silently_change_time(self):
         offer=service.claim(self.offer("open").pk,90003)
