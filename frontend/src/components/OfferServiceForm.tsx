@@ -4,11 +4,15 @@ import { dateLabel } from "./date-format";
 
 export type OfferCatalogService = {id:number;name:string;input_type:string;active:boolean;deleted_at?:string|null;default_organization?:number|null};
 type Values = {service?:number|null;service_name?:string;input_type?:string;organization?:number|null;date?:string|null;start_time?:string|null;end_time?:string|null;units?:string|null;amount?:string|null;comment?:string};
+export function newOfferRequestKey(cryptoApi: {randomUUID?:()=>string}|undefined = globalThis.crypto) {
+  if (typeof cryptoApi?.randomUUID === "function") return cryptoApi.randomUUID();
+  return `web-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+}
 export default function OfferServiceForm({services,organizations,busy,initial,onSave,onCancel}:{services:OfferCatalogService[];organizations:{id:number;name:string}[];busy:boolean;initial?:Values;onSave:(data:Record<string,unknown>,files:File[],key:string)=>Promise<void>;onCancel:()=>void}) {
   const [source,setSource]=useState(initial?.service?"catalog":initial?"free":"catalog");
   const [values,setValues]=useState({service:String(initial?.service||""),service_name:initial?.service_name||"",input_type:initial?.input_type||"time",organization:String(initial?.organization||""),date:initial?.date||"",start_time:initial?.start_time?.slice(0,5)||"",end_time:initial?.end_time?.slice(0,5)||"",units:initial?.units||"",amount:initial?.amount||"",comment:initial?.comment||""});
   const [files,setFiles]=useState<File[]>([]),[fileError,setFileError]=useState("");
-  const [requestKey] = useState(()=>globalThis.crypto.randomUUID());
+  const [requestKey] = useState(newOfferRequestKey);
   const selected=services.find(s=>String(s.id)===values.service);
   const mode=initial?.input_type||(source==="catalog"?selected?.input_type:values.input_type);
   const interval=!!(values.start_time||values.end_time);

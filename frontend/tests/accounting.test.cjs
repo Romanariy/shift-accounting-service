@@ -572,6 +572,15 @@ test("offer service form follows catalog format and supports a free task", async
   assert.match(text(renderer.toJSON()),/27.09.2026 \(Вс\)/);
 });
 
+test("offer form creates an idempotency key without secure-context randomUUID",()=>{
+  const {newOfferRequestKey}=require("../src/components/OfferServiceForm");
+  const first=newOfferRequestKey({});
+  const second=newOfferRequestKey({});
+  assert.match(first,/^web-[a-z0-9]+-[a-z0-9]+-[a-z0-9]+$/);
+  assert.match(second,/^web-[a-z0-9]+-[a-z0-9]+-[a-z0-9]+$/);
+  assert.notEqual(first,second);
+});
+
 test("offer list filters and archive use server queries and closing details preserves filters",async t=>{
   const config={services:serviceFormData.services,organizations:[{id:1,name:"Фокус"}],employees:[],contacts:[],workers:[]};
   const offer={id:7,version:1,kind:"service",service_name:"Подготовка",input_type:"quantity",units:"3",amount:null,state:"review",state_label:"Проверить",organization:1,organization_name:"Фокус",date:"2026-09-27",start_time:null,end_time:null,comment:"",sender_name:"Администратор",employee_name:"",intervals:[],questions:[],images:[],history:[]};
