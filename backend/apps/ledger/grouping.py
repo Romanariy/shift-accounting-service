@@ -1,6 +1,7 @@
 """One transactional write path for web, Telegram and legacy shift records."""
 from decimal import Decimal, ROUND_DOWN
 
+from django.conf import settings as django_settings
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Q
@@ -20,7 +21,7 @@ def matching(group_key):
 
 
 def find_group(group_key):
-    if not group_key:
+    if not group_key or not django_settings.SHARED_SHIFT_ALLOCATION_ENABLED:
         return None
     return DailyCalculation.objects.filter(service_id=group_key[0], organization_id=group_key[1], date=group_key[2], active=True).first()
 
@@ -50,7 +51,7 @@ def allocation(rows, price, minimum, maximum):
 
 
 def group_info(group):
-    if not group:
+    if not group or not django_settings.SHARED_SHIFT_ALLOCATION_ENABLED:
         return None
     return json_safe({"id": group.pk, "hours": group.hours, "total": group.total, "price": group.price,
                      "minimum": group.minimum, "maximum": group.maximum,
@@ -99,7 +100,7 @@ def commit_records(rows, *, deleted=(), actor="web", allow_frozen=False):
             if incoming:
                 rate = rate_for(*k)
                 rates[k] = rate
-                if rate.calculation == "hourly":
+                if django_settings.SHARED_SHIFT_ALLOCATION_ENABLED and rate.calculation == "hourly":
                     hourly_keys.add(k)
     guard_frozen(hourly_keys, [*rows, *old.values()], allow_frozen)
     if any(old.get(r.pk) and old[r.pk].organization_id and old[r.pk].calculation_version == 0 and key(r) in hourly_keys and financial_change(old[r.pk], r) and not r.deleted_at for r in rows):
@@ -175,7 +176,8 @@ def commit_records(rows, *, deleted=(), actor="web", allow_frozen=False):
             reason = actor + (":shared-shift" if key(final) in hourly_keys & changed_keys else "")
             audit_record(final, previous, reason)
             sync_legacy(final, enqueue=not (actor == "legacy" and final.pk in {r.pk for r in rows}))
-        if previous and previous["amount"] != str(final.amount) and Decimal(previous["amount"]) != final.amount:
+        if (django_settings.SHARED_SHIFT_ALLOCATION_ENABLED and previous
+                and previous["amount"] != str(final.amount) and Decimal(previous["amount"]) != final.amount):
             updates.append({"id": final.pk, "employee_name": final.employee_name, "before": previous["amount"], "after": str(final.amount)})
     for row in rows:
         row.refresh_from_db()

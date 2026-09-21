@@ -3,6 +3,7 @@ import json
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
+from django.conf import settings as django_settings
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Q
@@ -285,7 +286,7 @@ def recalculate(start, end, fingerprint=None):
             continue
         try:
             rate = rate_for(*group_key)
-            hourly = rate.calculation == "hourly"
+            hourly = django_settings.SHARED_SHIFT_ALLOCATION_ENABLED and rate.calculation == "hourly"
             if hourly:
                 hours, total, amounts = allocation(members, rate.price, rate.minimum, rate.maximum)
             else:
@@ -316,7 +317,7 @@ def recalculate(start, end, fingerprint=None):
             if not any(r.pk in changed_ids for r in members):
                 continue
             before = {r.pk: record_dict(r, include_group=False) for r in members}
-            if rate.calculation == "hourly":
+            if hourly:
                 group, _ = DailyCalculation.objects.update_or_create(service_id=group_key[0], organization_id=group_key[1], date=group_key[2],
                     defaults={"active": True, "price": rate.price, "minimum": rate.minimum, "maximum": rate.maximum, "hours": hours, "total": total})
             else:

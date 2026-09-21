@@ -93,6 +93,9 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 SHIFT_SYNC_ENDPOINT = os.environ.get("SHIFT_SYNC_ENDPOINT", "")
 SHIFT_SYNC_TOKEN = os.environ.get("SHIFT_SYNC_TOKEN", "")
 SHIFT_SYNC_AFTER_WRITE = os.environ.get("SHIFT_SYNC_AFTER_WRITE", "1") != "0"
+# Kept as a feature switch so shared shift allocation can be restored without
+# removing its models, migrations or calculation code.
+SHARED_SHIFT_ALLOCATION_ENABLED = os.environ.get("SHARED_SHIFT_ALLOCATION_ENABLED", "0") == "1"
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 
 # Private files are served by authenticated application routes, never a public media URL.

@@ -15,7 +15,7 @@ from .models import DailyCalculation, Rate, Record, Service, Settings
 
 
 @skipUnless(connection.vendor == "postgresql", "Row-lock concurrency requires PostgreSQL")
-@override_settings(SHIFT_SYNC_AFTER_WRITE=False, SHIFT_SYNC_ENDPOINT="")
+@override_settings(SHIFT_SYNC_AFTER_WRITE=False, SHIFT_SYNC_ENDPOINT="", SHARED_SHIFT_ALLOCATION_ENABLED=True)
 class SharedConcurrencyTests(TransactionTestCase):
     def setUp(self):
         self.org = Organization.objects.create(name="Параллельная студия", aliases=["параллельная"])

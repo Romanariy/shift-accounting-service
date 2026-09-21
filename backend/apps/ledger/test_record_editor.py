@@ -11,7 +11,7 @@ from .engine import save_record
 from .models import Accrual, DailyCalculation, Rate, Record, Service
 
 
-@override_settings(SHIFT_SYNC_ENDPOINT="", SHIFT_SYNC_AFTER_WRITE=False, TELEGRAM_BOT_TOKEN="")
+@override_settings(SHIFT_SYNC_ENDPOINT="", SHIFT_SYNC_AFTER_WRITE=False, TELEGRAM_BOT_TOKEN="", SHARED_SHIFT_ALLOCATION_ENABLED=True)
 class RecordEditorTests(TestCase):
     def setUp(self):
         self.org = Organization.objects.get(name="Фокус")

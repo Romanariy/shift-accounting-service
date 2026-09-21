@@ -16,7 +16,7 @@ from .models import DailyCalculation, Invoice, Rate, Record, Service
 from . import tests as ledger_tests
 
 
-@override_settings(SHIFT_SYNC_AFTER_WRITE=False, SHIFT_SYNC_ENDPOINT="")
+@override_settings(SHIFT_SYNC_AFTER_WRITE=False, SHIFT_SYNC_ENDPOINT="", SHARED_SHIFT_ALLOCATION_ENABLED=True)
 class SharedShiftTests(TestCase):
     setUp = ledger_tests.LedgerTests.setUp
     ingest = ledger_tests.LedgerTests.ingest

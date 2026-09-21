@@ -3,13 +3,14 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from asgiref.sync import async_to_sync
-from django.test import TestCase
+from django.test import TestCase, override_settings
 
 from apps.shifts.management.commands.run_shift_bot import process_message
 from apps.shifts.models import Employee, Organization
 from .models import Record, Service, Settings
 
 
+@override_settings(SHARED_SHIFT_ALLOCATION_ENABLED=True)
 class BotConfirmationTests(TestCase):
     def setUp(self):
         self.employee = Employee.objects.first()

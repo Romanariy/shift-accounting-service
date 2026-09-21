@@ -3,6 +3,7 @@ export type Bootstrap = {
   services: Item[]; rates: Item[]; accruals: Item[]; preferences: Item[];
   contacts: Item[]; organizations: Item[]; settings: Item;
   employees: Item[]; organization_list: Item[];
+  features?: {shared_shift_allocation:boolean};
   offer_config?: {enabled:boolean;chat_id:number|null;thread_id:number|null;claimed_thread_id?:number|null;released_thread_id?:number|null};
 };
 export type Field = { key: string; label: string; type?: string; required?: boolean; hint?: string; options?: { value: string | number; label: string }[] };

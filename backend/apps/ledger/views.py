@@ -145,12 +145,14 @@ def read(request, resource, pk, action):
         response["Cache-Control"] = "private, no-store"
         return response
     if resource == "bootstrap":
+        from django.conf import settings as django_settings
         Settings.objects.get_or_create(pk=1)
         from apps.offers.routing import config_data
         from apps.shifts.team import team_data
         return reply({**{name: [serialized(x) for x in Model.objects.all()] for name, Model in RESOURCES.items()},
                       "settings": serialized(Settings.objects.get(pk=1)),
                       "offer_config": config_data(), "employees": team_data(),
+                      "features": {"shared_shift_allocation": django_settings.SHARED_SHIFT_ALLOCATION_ENABLED},
                       "organization_list": [{"id": o.pk, "name": o.name, "active": o.is_active} for o in Organization.objects.all()]})
     if resource == "records":
         rows = Record.objects.filter(deleted_at=None).select_related("service", "organization")
