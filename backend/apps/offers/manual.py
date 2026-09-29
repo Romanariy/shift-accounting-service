@@ -51,6 +51,8 @@ def fill(offer, data, *, existing=False):
     elif offer.input_type == "amount":
         offer.amount = decimal_value(data.get("amount"), "Сумма", zero=True)
     offer.comment = str(data.get("comment", ""))[:4000]
+    if offer.service_id and offer.service.comment_required and not offer.comment.strip():
+        raise ValidationError("Комментарий обязателен. " + (offer.service.comment_hint or "Опишите, что нужно сделать."))
 
 
 @transaction.atomic

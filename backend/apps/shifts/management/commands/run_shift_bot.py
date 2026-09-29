@@ -49,7 +49,9 @@ def ingest_response(text, **kwargs):
         if r.service_id and r.description:
             title += " — " + r.description
         organization = r.organization.name if r.organization_id else "Без организации"
-        lines.append(f"{date_label(r.date, short=True)} · {title} · {organization} · {r.employee_name or r.author_name} · {r.amount:,.2f} ₽" + (" · нужно проверить" if r.review or r.error else ""))
+        lines.append(f"{date_label(r.date, short=True)} · {title} · {organization} · {r.employee_name or r.author_name} · {r.amount:,.2f} ₽" + (" · нужно проверить" if r.review or r.error or r.calculation_review else ""))
+        if r.calculation_note:
+            lines.append(r.calculation_note)
     current_ids = {r.pk for r in rows}
     for change in getattr(rows[0], "allocation_changes", []):
         if change["id"] not in current_ids:

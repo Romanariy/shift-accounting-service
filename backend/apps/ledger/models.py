@@ -22,6 +22,8 @@ class Service(models.Model):
     active = models.BooleanField(default=True)
     deleted_at = models.DateTimeField(null=True, blank=True)
     legacy_code = models.CharField(max_length=48, blank=True)
+    comment_required = models.BooleanField(default=False)
+    comment_hint = models.CharField(max_length=500, blank=True)
 
     class Meta:
         ordering = ("sort_order", "id")
@@ -35,6 +37,8 @@ class Service(models.Model):
         tokens = {self.name.casefold(), *self.aliases}
         if not self.name:
             raise ValidationError("Укажите название услуги.")
+        if self.comment_required and self.frequency != "entry":
+            raise ValidationError("Обязательный комментарий доступен для услуг по записи, а не автоначислений.")
         for other in Service.objects.exclude(pk=self.pk).filter(active=True):
             if self.active and tokens & {other.name.casefold(), *other.aliases}:
                 raise ValidationError(f"Алиас уже используется услугой «{other.name}».")
@@ -174,6 +178,12 @@ class Record(models.Model):
     end_time = models.TimeField(null=True, blank=True)
     units = models.DecimalField(max_digits=10, decimal_places=2, default=1)
     amount = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    base_amount = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+    overlap_factor = models.DecimalField(max_digits=3, decimal_places=2, default=1)
+    bonus = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    bonus_reason = models.CharField(max_length=500, blank=True)
+    calculation_note = models.TextField(blank=True)
+    calculation_review = models.BooleanField(default=False)
     daily_calculation = models.ForeignKey(DailyCalculation, null=True, blank=True, on_delete=models.PROTECT, related_name="records")
     calculation_version = models.PositiveSmallIntegerField(default=0)
     review = models.BooleanField(default=False)
@@ -201,6 +211,44 @@ class Record(models.Model):
         ]
 
 
+class OverlapDecision(models.Model):
+    employee = models.ForeignKey("shifts.Employee", on_delete=models.PROTECT)
+    date = models.DateField()
+    fingerprint = models.CharField(max_length=64)
+    half_organizations = models.JSONField(default=list)
+    members = models.JSONField(default=list)
+    author = models.CharField(max_length=160, default="web")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=("employee", "date", "fingerprint"), name="ledger_overlap_decision")]
+
+
+class OrganizationReceipt(models.Model):
+    organization = models.ForeignKey("shifts.Organization", on_delete=models.PROTECT)
+    date = models.DateField(db_index=True)
+    kind = models.CharField(max_length=12, choices=choices("receipt", "deduction"), default="receipt")
+    payer = models.CharField(max_length=200, blank=True)
+    reason = models.CharField(max_length=500, blank=True)
+    amount = models.DecimalField(max_digits=14, decimal_places=2)
+    deleted_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("-date", "-id")
+
+    def clean(self):
+        self.payer = self.payer.strip()
+        self.reason = self.reason.strip()
+        if self.amount is None or self.amount <= 0:
+            raise ValidationError("Укажите положительную сумму.")
+        if self.kind == "receipt" and not self.payer:
+            raise ValidationError("Укажите плательщика.")
+        if self.kind == "deduction" and not self.reason:
+            raise ValidationError("Укажите причину вычета.")
+
+
 class Batch(models.Model):
     start = models.DateField()
     end = models.DateField()
@@ -222,6 +270,7 @@ class Invoice(models.Model):
     version = models.PositiveIntegerField(default=1)
     replaces = models.ForeignKey("self", null=True, blank=True, on_delete=models.PROTECT)
     lines = models.JSONField(default=list)
+    receipts = models.JSONField(default=list, blank=True)
     adjustments = models.JSONField(default=list, blank=True)
     excluded_ids = models.JSONField(default=list, blank=True)
     recipients = models.JSONField(default=list)

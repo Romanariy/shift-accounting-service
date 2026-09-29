@@ -5,6 +5,7 @@ import { dateLabel, dateTimeLabel } from "./date-format";
 import type { Bootstrap, Item } from "./accounting-types";
 
 const fields: Record<string, string> = {
+  bonus:"Доплата", bonus_reason:"Причина доплаты", base_amount:"База", overlap_factor:"Коэффициент", calculation_note:"Расчёт", calculation_review:"Расчёт требует проверки", payer:"Плательщик", reason:"Причина вычета",
   id: "Номер записи", kind: "Вид записи", date: "Дата", organization: "Организация", organizationId: "Организация",
   daily_calculation: "Дневной расчёт", calculation_version: "Версия расчёта",
   organization_name: "Организация", employee: "Исполнитель", employeeId: "Исполнитель", employee_name: "Имя исполнителя",
@@ -18,7 +19,7 @@ const fields: Record<string, string> = {
   legacy_id: "Номер прежней записи", auto_key: "Ключ автоначисления",
 };
 const values: Record<string, string> = {
-  service: "Типовая услуга", oneoff: "Разовая работа", expense: "Расход", time: "Интервал времени", quantity: "Количество",
+  receipt:"Получение оплаты", deduction:"Вычет", service: "Типовая услуга", oneoff: "Разовая работа", expense: "Расход", time: "Интервал времени", quantity: "Количество",
   mark: "Отметка", amount: "Готовая сумма", web: "Сайт", telegram: "Telegram", auto: "Автоначисление",
   demo: "Тестовые данные", import: "Импорт", manual: "Ручной ввод", small_admin: "Малый админ", big_admin: "Большой админ",
 };
@@ -46,7 +47,7 @@ export default function HistoryDialog({record, data, onClose}: {record:Item;data
     setLoading(true); setError(""); setEntries([]);
     async function load() {
       try {
-        const response = await fetch(`/api/shifts/ledger/audit/?entity_type=record&entity_id=${record.id}`, {cache:"no-store", signal:controller.signal});
+        const response = await fetch(`/api/shifts/ledger/audit/?entity_type=${record.entity_type||"record"}&entity_id=${record.id}`, {cache:"no-store", signal:controller.signal});
         const result = await response.json();
         if (!response.ok) throw new Error(result.error || "Не удалось загрузить историю");
         if (active) setEntries(result);
@@ -56,7 +57,7 @@ export default function HistoryDialog({record, data, onClose}: {record:Item;data
     }
     void load();
     return () => { active = false; controller.abort(); };
-  }, [record.id, retry]);
+  }, [record.id, record.entity_type, retry]);
 
   function format(key: string, value: unknown): string {
     if (value === null || value === undefined || value === "") return "—";

@@ -13,8 +13,9 @@ from django.utils import timezone
 from apps.shifts.audit import json_safe, log_change
 from apps.shifts.models import AuditLog, Organization
 from .engine import accrue, digest, lock, money, rate_for, record_dict
-from .models import Accrual, Batch, Delivery, Invoice, OrganizationBilling, Rate, Record, Service
+from .models import Accrual, Batch, Delivery, Invoice, OrganizationBilling, OrganizationReceipt, Rate, Record, Service
 from .payments import queue_keyboard_removal, supersede_payment
+from .receipts import data as json_safe_receipt
 
 
 def safe_text(value):
@@ -33,21 +34,23 @@ def workbook_bytes(invoice, batch):
     main.append(["Счёт", f"{invoice.pk} / версия {invoice.version}"])
     main.append(["Всего по счёту", float(invoice.total)])
     main.append([])
-    columns = ["Дата", "Исполнитель", "Услуга / описание", "Время", "Часы / количество", "Сумма"]
+    columns = ["Дата", "Исполнитель", "Услуга / описание", "Время", "Часы / количество", "Сумма", "База", "Коэффициент", "Доплата", "Причина доплаты / расчёт"]
     sheets = {"Основной": main}
     main.append(columns)
     totals = {}
     for line in invoice.lines:
         if line["id"] in invoice.excluded_ids:
             continue
-        sheet = line["sheet"]
+        sheet = "Услуги · полученные оплаты" if line["sheet"].casefold() == "полученные оплаты" else line["sheet"]
         if sheet not in sheets:
             sheets[sheet] = wb.create_sheet(sheet)
             sheets[sheet].append(columns)
         time_range = f'{line["start_time"][:5]}–{line["end_time"][:5]}' if line.get("start_time") and line.get("end_time") else ""
         title = line["description"] if line["kind"] in ("oneoff", "expense") else line["service_name"] + (f' — {line["description"]}' if line["description"] else "")
         sheets[sheet].append([date.fromisoformat(line["date"]), safe_text(line["employee_name"]), safe_text(title), time_range,
-                              float(line["units"]) if line.get("input_type") in ("time", "quantity") else None, float(line["amount"])])
+                              float(line["units"]) if line.get("input_type") in ("time", "quantity") else None, float(line["amount"]),
+                              float(line.get("base_amount") or line["amount"]), float(line.get("overlap_factor", 1)),
+                              float(line.get("bonus", 0)), safe_text("; ".join(filter(None, [line.get("bonus_reason"), line.get("calculation_note")])))])
         totals[sheet] = totals.get(sheet, Decimal(0)) + Decimal(line["amount"])
     for name, ws in sheets.items():
         ws.append(["Итого по листу", None, None, None, None, float(totals.get(name, 0))])
@@ -61,6 +64,17 @@ def workbook_bytes(invoice, batch):
         main.append([name, float(total)])
     main.append(["Корректировки", float(sum(Decimal(a["amount"]) for a in invoice.adjustments))])
     main.append(["Общий итог", float(invoice.total)])
+    receipts_sheet = wb.create_sheet("Полученные оплаты")
+    receipts_sheet.append(["Дата", "От кого / причина вычета", "Сумма", "Операция"])
+    for receipt in invoice.receipts:
+        deduction = receipt.get("kind") == "deduction"
+        receipts_sheet.append([date.fromisoformat(receipt["date"]), safe_text(receipt.get("reason") if deduction else receipt["payer"]),
+                               float(receipt["amount"]) * (-1 if deduction else 1), "Вычет" if deduction else "Получено"])
+    received = sum((Decimal(r["amount"]) for r in invoice.receipts if r.get("kind") != "deduction"), Decimal(0))
+    deducted = sum((Decimal(r["amount"]) for r in invoice.receipts if r.get("kind") == "deduction"), Decimal(0))
+    receipts_sheet.append(["Итого получено", None, float(received)])
+    receipts_sheet.append(["Итого вычтено", None, float(deducted)])
+    receipts_sheet.append(["Остаток за период", None, float(received - deducted)])
     for ws in wb.worksheets:
         ws.freeze_panes = "A6" if ws == main else "A2"
         ws.sheet_view.showGridLines = False
@@ -68,7 +82,7 @@ def workbook_bytes(invoice, batch):
         for cell in ws[header_row]:
             cell.font = Font(bold=True, color="FFFFFF")
             cell.fill = PatternFill("solid", fgColor="28756A")
-        for index, width in enumerate([22, 25, 54, 20, 22, 20], 1):
+        for index, width in enumerate(([22, 45, 22, 20] if ws == receipts_sheet else [22, 25, 40, 20, 22, 20, 20, 15, 20, 48]), 1):
             ws.column_dimensions[get_column_letter(index)].width = width
         for row in ws:
             for cell in row:
@@ -98,6 +112,7 @@ def current_source(batch):
                          "payment_recipients": list(profile.payment_recipients.filter(pk__in=profile.recipients.all()).order_by("user_id").values_list("user_id", flat=True))})
     records = [record_dict(r) for r in Record.objects.filter(organization_id__in=batch.organization_ids, date__range=(batch.start, batch.end), deleted_at=None).select_related("organization", "service").order_by("id")]
     return {"profiles": profiles, "records": records,
+            "receipts": [json_safe_receipt(r) for r in OrganizationReceipt.objects.filter(organization_id__in=batch.organization_ids, date__range=(batch.start, batch.end), deleted_at=None).order_by("date", "id")],
             "rates": list(Rate.objects.filter(organization_id__in=batch.organization_ids).order_by("id").values()),
             "services": list(Service.objects.order_by("id").values()),
             "accruals": list(Accrual.objects.filter(organization_id__in=batch.organization_ids).order_by("id").values())}
@@ -157,10 +172,12 @@ def refresh(batch):
         # Older flags remain in the schema for compatibility, but new invoices account for every live record.
         invoice.excluded_ids = []
         invoice.lines = [r for r in data["records"] if r["organization"] == invoice.organization_id]
+        invoice.receipts = [r for r in data["receipts"] if r["organization"] == invoice.organization_id]
         order = {s["id"]: s["sort_order"] for s in data["services"]}
         invoice.lines.sort(key=lambda r: (0 if r["sheet"] == "Основной" else 2 if r["sheet"] == "Расходы" else 1, order.get(r["service"], 100), r["date"], r["id"]))
         invoice.errors = [f'Запись #{r["id"]}: {r["error"] or "нужно проверить исполнителя"}' for r in invoice.lines
                           if r["id"] not in invoice.excluded_ids and (r["review"] or r["error"])]
+        invoice.errors.extend(f'Запись #{r["id"]}: {r["calculation_note"]}' for r in invoice.lines if r.get("calculation_review"))
         for line in invoice.lines:
             if line["kind"] == "service" and line["id"] not in invoice.excluded_ids:
                 try:

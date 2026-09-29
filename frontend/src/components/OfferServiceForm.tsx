@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { dateLabel } from "./date-format";
 
-export type OfferCatalogService = {id:number;name:string;input_type:string;active:boolean;deleted_at?:string|null;default_organization?:number|null};
+export type OfferCatalogService = {id:number;name:string;input_type:string;active:boolean;deleted_at?:string|null;default_organization?:number|null;comment_required?:boolean;comment_hint?:string};
 type Values = {service?:number|null;service_name?:string;input_type?:string;organization?:number|null;date?:string|null;start_time?:string|null;end_time?:string|null;units?:string|null;amount?:string|null;comment?:string};
 export function newOfferRequestKey(cryptoApi: {randomUUID?:()=>string}|undefined = globalThis.crypto) {
   if (typeof cryptoApi?.randomUUID === "function") return cryptoApi.randomUUID();
@@ -26,7 +26,7 @@ export default function OfferServiceForm({services,organizations,busy,initial,on
       {mode==="time"&&<><label>Начало<input type="time" required={interval} value={values.start_time} onChange={e=>change("start_time",e.target.value)}/></label><label>Окончание<input type="time" required={interval} value={values.end_time} onChange={e=>change("end_time",e.target.value)}/></label></>}
       {(mode==="quantity"||(mode==="time"&&!interval))&&<label>{mode==="time"?"Часы":"Количество"}<input type="number" min="0.01" step="0.01" required value={values.units} onChange={e=>change("units",e.target.value)}/></label>}
       {mode==="amount"&&<label>Готовая сумма, ₽<input type="number" min="0" step="0.01" required value={values.amount} onChange={e=>change("amount",e.target.value)}/></label>}
-    </div><label>Комментарий<textarea maxLength={4000} value={values.comment} onChange={e=>change("comment",e.target.value)}/></label>
+    </div><label>Комментарий{source==="catalog"&&selected?.comment_required?" *":""}{source==="catalog"&&selected?.comment_hint&&<small>{selected.comment_hint}</small>}<textarea required={source==="catalog"&&!!selected?.comment_required} maxLength={4000} value={values.comment} onChange={e=>change("comment",e.target.value)}/></label>
     {!initial&&<label>Фотографии (необязательно)<input type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={e=>{const next=Array.from(e.target.files||[]);setFileError(next.length>10||next.some(f=>f.size>10*1024*1024)?"До 10 изображений, каждое не более 10 МБ.":"");setFiles(next);}}/></label>}
     {fileError&&<p role="alert">{fileError}</p>}<p className="muted">{interval?"Завершение по окончании интервала.":"Без точного времени предложение закроется в конце указанного дня."} Начисления и фактическая работа вносятся отдельно.</p>
     <div className="actions"><button className="button" disabled={busy||!!fileError}>{busy?"Сохраняем…":initial?"Сохранить":"Создать для проверки"}</button><button type="button" className="button secondary" disabled={busy} onClick={onCancel}>Закрыть</button></div>

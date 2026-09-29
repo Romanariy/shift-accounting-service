@@ -29,6 +29,11 @@ def instructions(wizard):
     if step == "value":
         return {"time": "Укажите интервал ЧЧ:ММ–ЧЧ:ММ либо число часов.", "quantity": "Укажите количество.", "amount": "Укажите готовую сумму в рублях."}[wizard.data["input_type"]]
     if step == "comment":
+        catalog = Service.objects.filter(pk=wizard.data.get("service")).first()
+        if catalog and catalog.comment_required:
+            return "Комментарий обязателен. " + (catalog.comment_hint or "Опишите, что нужно сделать.")
+        if catalog and catalog.comment_hint:
+            return catalog.comment_hint + " Напишите комментарий или /skip, чтобы пропустить."
         return "Напишите комментарий или /skip, чтобы пропустить."
     if step == "attachments":
         return "Пришлите фотографии (до 10) или альбом. Они будут вложениями без распознавания. Затем /done — проверить и опубликовать."

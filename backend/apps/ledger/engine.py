@@ -88,6 +88,9 @@ def audit_record(record, before, actor):
 @transaction.atomic
 def save_record(payload, record=None, actor="web", allow_frozen=False):
     lock()
+    from .overlaps import source_token, eligible
+    if payload.get("preview_fingerprint") and payload["preview_fingerprint"] != source_token():
+        raise ValidationError("Данные изменились. Обновите предварительный расчёт.")
     caller_record = record
     record = Record.objects.get(pk=record.pk) if record and record.pk else Record()
     original_service_id = record.service_id
@@ -151,6 +154,14 @@ def save_record(payload, record=None, actor="web", allow_frozen=False):
         if not record.employee.is_active:
             raise ValidationError("Сотрудник отключён.")
         record.employee_name = record.employee.display_name
+    if "bonus" in payload:
+        record.bonus = money(payload["bonus"] or 0)
+    if "bonus_reason" in payload:
+        record.bonus_reason = str(payload["bonus_reason"] or "").strip()
+    if record.bonus < 0 or (record.bonus and not eligible(record)):
+        raise ValidationError("Неотрицательная доплата доступна только для смен администратора.")
+    if record.bonus and not record.bonus_reason:
+        raise ValidationError("Укажите причину доплаты.")
     record.review = record.kind != "expense" and not record.employee_id and not record.auto_key
     record.error = ""
     from .grouping import commit_records
@@ -163,9 +174,12 @@ def save_record(payload, record=None, actor="web", allow_frozen=False):
 def preview_record(payload):
     """Use the actual shared-day engine; discard rows, audits, outbox and on-commit callbacks."""
     with transaction.atomic():
+        lock()
+        from .overlaps import source_token
+        fingerprint = source_token()
         record = Record.objects.get(pk=payload["id"]) if payload.get("id") else None
         result = save_record(payload, record, allow_frozen=payload.get("correction") is True)
-        data = {**record_dict(result), "allocation_changes": result.allocation_changes}
+        data = {**record_dict(result), "allocation_changes": result.allocation_changes, "preview_fingerprint": fingerprint}
         transaction.set_rollback(True)
     return {"record": data}
 
@@ -261,6 +275,9 @@ def accrue(until=None):
 
 @transaction.atomic
 def recalculate(start, end, fingerprint=None):
+    if not django_settings.SHARED_SHIFT_ALLOCATION_ENABLED:
+        from .recalculation import recalculate_independent
+        return recalculate_independent(start, end, fingerprint)
     from collections import defaultdict
     from .grouping import allocation, key, find_group
     from .models import DailyCalculation

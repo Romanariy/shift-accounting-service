@@ -59,7 +59,7 @@ def group_info(group):
 
 
 def financial_change(old, new):
-    fields = ("kind", "service_id", "organization_id", "date", "units", "start_time", "end_time", "deleted_at")
+    fields = ("kind", "service_id", "organization_id", "employee_id", "date", "units", "start_time", "end_time", "deleted_at", "bonus", "bonus_reason")
     return old is None or any(getattr(old, field) != getattr(new, field) for field in fields) or (new.kind != "service" and old.amount != new.amount)
 
 
@@ -79,10 +79,21 @@ def commit_records(rows, *, deleted=(), actor="web", allow_frozen=False):
     from .engine import lock, calculate, rate_for, record_dict, audit_record, sync_legacy
     lock()
     rows = list(rows)
+    for row in rows:
+        if not row.deleted_at and row.kind == "service" and row.service_id and row.service.comment_required and not str(row.description or "").strip():
+            hint = row.service.comment_hint or "Опишите, что было сделано."
+            raise ValidationError(f"Для услуги «{row.service.name}» нужен комментарий. {hint} Добавьте комментарий после организации в исходное сообщение и отредактируйте его.")
     for row in deleted:
         row.deleted_at = timezone.now()
         rows.append(row)
     old = {r.pk: Record.objects.get(pk=r.pk) for r in rows if r.pk}
+    from . import overlaps
+    cross_keys = {k for r in rows if financial_change(old.get(r.pk), r)
+                  for source in (r, old.get(r.pk)) if source is not None
+                  for k in [overlaps.day_key(source)] if k}
+    if django_settings.SHARED_SHIFT_ALLOCATION_ENABLED:
+        cross_keys = set()  # Explicit legacy mode retains its former calculation contract.
+    cross_peers = list(overlaps.members(cross_keys))
     changed_keys = {k for r in rows for k in (key(old.get(r.pk)) if r.pk else None, key(r)) if k and financial_change(old.get(r.pk), r)}
     all_keys = {key(r) for r in rows if key(r)} | {key(r) for r in old.values() if key(r)}
     # Fixed/quantity services remain independent; only hourly groups share the freeze boundary.
@@ -114,6 +125,7 @@ def commit_records(rows, *, deleted=(), actor="web", allow_frozen=False):
 
     # Capture every participant before writing, including ones whose shares will change indirectly.
     affected = dict(old)
+    affected.update({r.pk: r for r in cross_peers})
     for k in hourly_keys & changed_keys:
         affected.update({r.pk: r for r in matching(k)})
     before = {pk: record_dict(r, include_group=False) for pk, r in affected.items()}
@@ -165,6 +177,20 @@ def commit_records(rows, *, deleted=(), actor="web", allow_frozen=False):
             participant.save()
             affected[participant.pk] = participant
 
+    cross_rows = list(overlaps.members(cross_keys))
+    overlaps.plan(cross_rows)
+    for peer in cross_rows:
+        prior = affected.get(peer.pk)
+        if prior and any(getattr(prior, f) != getattr(peer, f) for f in overlaps.FIELDS):
+            guard_frozen(set(), [prior], allow_frozen)
+        peer.daily_calculation = None
+        peer.save()
+        affected[peer.pk] = peer
+    # A record without an employee still supports a separately stored base and bonus.
+    for row in rows:
+        if not row.deleted_at and overlaps.eligible(row) and not row.employee_id and financial_change(old.get(row.pk), row):
+            overlaps.plan([row])
+            row.save()
     changed_ids = {r.pk for r in rows} | set(affected)
     updates = []
     for final in Record.objects.filter(pk__in=changed_ids).order_by("id"):
@@ -176,7 +202,7 @@ def commit_records(rows, *, deleted=(), actor="web", allow_frozen=False):
             reason = actor + (":shared-shift" if key(final) in hourly_keys & changed_keys else "")
             audit_record(final, previous, reason)
             sync_legacy(final, enqueue=not (actor == "legacy" and final.pk in {r.pk for r in rows}))
-        if (django_settings.SHARED_SHIFT_ALLOCATION_ENABLED and previous
+        if ((django_settings.SHARED_SHIFT_ALLOCATION_ENABLED or overlaps.eligible(final)) and previous
                 and previous["amount"] != str(final.amount) and Decimal(previous["amount"]) != final.amount):
             updates.append({"id": final.pk, "employee_name": final.employee_name, "before": previous["amount"], "after": str(final.amount)})
     for row in rows:

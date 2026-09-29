@@ -2,6 +2,7 @@
 import { dateLabel } from "./date-format";
 
 import { FormEvent, useEffect, useRef, useState } from "react";
+import CalculationDetails from "./CalculationDetails";
 import SharedShiftDetails from "./SharedShiftDetails";
 import type { Bootstrap, Editor, Item } from "./accounting-types";
 
@@ -16,6 +17,10 @@ export function serviceRecordPayload(values: Record<string,any>, original: Recor
     kind:"service",date:values.date,organization:optionalId(values.organization),employee:optionalId(values.employee),
     service:optionalId(values.service),description:values.description || "",
   };
+  if (["small_admin","big_admin"].includes(service?.legacy_code)) {
+    normalized.bonus = values.bonus || "0";
+    normalized.bonus_reason = values.bonus_reason || "";
+  }
   if (mode === "time") {
     normalized.start_time = timeValue(values.start_time) || null;
     normalized.end_time = timeValue(values.end_time) || null;
@@ -33,7 +38,7 @@ export function serviceRecordPayload(values: Record<string,any>, original: Recor
     if (["start_time","end_time"].includes(key)) old = timeValue(old) || null;
     if (["organization","employee","service"].includes(key)) old = optionalId(old);
     if (key === "description") old = old || "";
-    if (["units","amount"].includes(key) && value !== null && value !== "" && Number(value) === Number(old)) continue;
+    if (["units","amount","bonus"].includes(key) && value !== null && value !== "" && Number(value) === Number(old || 0)) continue;
     if (value !== old) payload[key] = value;
   }
   return payload;
@@ -51,7 +56,7 @@ export default function ServiceRecordEditor({editor,data,busy,error,onClose,onSa
   const payload = serviceRecordPayload(values,editor.values,service);
   const serialized = JSON.stringify(payload);
   const hasInterval = !!(values.start_time || values.end_time);
-  const incomplete = !values.date || !values.organization || !values.service ||
+  const incomplete = (service?.comment_required && !String(values.description||"").trim()) || !values.date || !values.organization || !values.service ||
     (mode==="time" && hasInterval && (!values.start_time || !values.end_time)) ||
     (["time","quantity"].includes(mode) && !hasInterval && !(Number(values.units)>0)) ||
     (mode==="amount" && (values.amount==="" || values.amount==null));
@@ -88,7 +93,7 @@ export default function ServiceRecordEditor({editor,data,busy,error,onClose,onSa
       return next;
     });
   }
-  function submit(event:FormEvent) {event.preventDefault();if(ready&&!busy)onSave(payload);}
+  function submit(event:FormEvent) {event.preventDefault();if(ready&&!busy)onSave({...payload,...(preview.preview_fingerprint?{preview_fingerprint:preview.preview_fingerprint}:{})});}
   const organizations=(data?.organization_list||[]).filter(item=>item.active||item.id===Number(editor.values.organization));
   const employees=(data?.employees||[]).filter(item=>item.active||item.id===Number(editor.values.employee));
   const services=(data?.services||[]).filter(item=>(item.active && item.frequency==="entry")||item.id===Number(editor.values.service));
@@ -106,11 +111,15 @@ export default function ServiceRecordEditor({editor,data,busy,error,onClose,onSa
       </>}
       {["time","quantity"].includes(mode)&&<label><span>{mode==="time"?"Часы":"Количество *"}</span><input aria-label={mode==="time"?"Часы":"Количество"} type="number" step="any" min="0.01" required={!hasInterval} readOnly={mode==="time"&&hasInterval} value={mode==="time"&&hasInterval?(ready?preview.units:""):values.units??""} onChange={e=>change("units",e.target.value)}/><small>{mode==="time"?(hasInterval?"Часы рассчитываются по интервалу, в том числе через полночь.":"Укажите интервал или введите часы вручную."):"Стоимость рассчитывается по тарифу организации."}</small></label>}
       {mode==="amount"&&<label><span>Готовая сумма, ₽ *</span><input aria-label="Готовая сумма, ₽" type="number" step="any" required value={values.amount??""} onChange={e=>change("amount",e.target.value)}/></label>}
+      {["small_admin","big_admin"].includes(service?.legacy_code)&&<>
+        <label><span>Доплата сверх базы, ₽</span><input aria-label="Доплата сверх базы" type="number" step="0.01" min="0" value={values.bonus??"0"} onChange={e=>change("bonus",e.target.value)}/><small>При пересечении студий доплата сохраняется полностью.</small></label>
+        <label><span>Причина доплаты</span><input aria-label="Причина доплаты" required={Number(values.bonus)>0} maxLength={500} value={values.bonus_reason||""} onChange={e=>change("bonus_reason",e.target.value)}/></label>
+      </>}
       {service&&<div className="service-preview full" aria-live="polite" aria-busy={!incomplete&&!ready&&!previewError}>
-        <span>Стоимость по тарифу</span>
-        {previewError?<p role="alert" className="inline-error">{previewError}</p>:ready?<><strong>{rub(preview.amount)}</strong>{preview.daily_group&&<small>Итого за смену: {rub(preview.daily_group.total)} · {preview.daily_group.hours} ч. Доля записи учитывает общий минимум и максимум.</small>}<SharedShiftDetails group={preview.daily_group}/>{(preview.allocation_changes||[]).filter((item:Item)=>item.id!==editor.values.id).map((item:Item)=><small key={item.id}>{item.employee_name||"Без исполнителя"}: {rub(item.before)} → {rub(item.after)}</small>)}</>:<p>{incomplete?"Заполните организацию, услугу и объём работы для расчёта.":"Рассчитываем…"}</p>}
+        <span>Итоговая стоимость</span>
+        {previewError?<p role="alert" className="inline-error">{previewError}</p>:ready?<><strong>{rub(preview.amount)}</strong><CalculationDetails record={preview}/>{preview.daily_group&&<small>Итого за смену: {rub(preview.daily_group.total)} · {preview.daily_group.hours} ч. Доля записи учитывает общий минимум и максимум.</small>}<SharedShiftDetails group={preview.daily_group}/>{(preview.allocation_changes||[]).filter((item:Item)=>item.id!==editor.values.id).map((item:Item)=><small key={item.id}>{item.employee_name||"Без исполнителя"}: {rub(item.before)} → {rub(item.after)}</small>)}</>:<p>{incomplete?"Заполните организацию, услугу и объём работы для расчёта.":"Рассчитываем…"}</p>}
       </div>}
-      <label className="full"><span>Комментарий</span><textarea aria-label="Комментарий" value={values.description||""} onChange={e=>change("description",e.target.value)} rows={3}/><small>Изменение комментария сохраняет ранее рассчитанную сумму.</small></label>
+      <label className="full"><span>Комментарий{service?.comment_required?" *":""}</span>{service?.comment_hint&&<small>{service.comment_hint}</small>}<textarea required={!!service?.comment_required} placeholder={service?.comment_hint||""} aria-label="Комментарий" value={values.description||""} onChange={e=>change("description",e.target.value)} rows={3}/><small>Изменение комментария сохраняет ранее рассчитанную сумму.</small></label>
       <label className="full"><span>Корректировка подтверждённой работы или смены</span><input type="checkbox" checked={!!values.correction} onChange={e=>change("correction",e.target.checked)}/><small>Разрешает изменение всех затронутых долей смены. Отправленный Excel сохранится; после исправления создайте новую версию счёта.</small></label>
     </div><footer><button type="button" className="button secondary" onClick={onClose}>Отмена</button><button className="button" disabled={busy||!ready}>{busy?"Сохраняем…":"Сохранить"}</button></footer>
   </form></dialog>;

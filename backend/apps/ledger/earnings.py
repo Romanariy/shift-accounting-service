@@ -41,6 +41,8 @@ def report_data(month, now=None):
             reasons.append("Нужна проверка")
         if r.error:
             reasons.append(r.error)
+        if r.calculation_review:
+            reasons.append(r.calculation_note)
         if reasons:
             item = {"id": r.pk, "date": r.date.isoformat(), "organization_name": r.organization.name if r.organization_id else "Без организации",
                     "employee_name": r.employee_name or (r.employee.display_name if r.employee_id else "Без сотрудника"),

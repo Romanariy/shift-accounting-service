@@ -40,6 +40,15 @@ class BotConfirmationTests(TestCase):
         self.assertEqual(message.message_thread_id, 10)
         self.assertNotIn("Не удалось", response)
 
+    def test_required_comment_prompts_with_service_hint_without_saving(self):
+        Service.objects.filter(legacy_code="small_admin").update(comment_required=True,comment_hint="Напишите номер зала и причину задержки.")
+        response=self.process(self.message("12.04 10:00–14:00 Фокус"))
+        self.assertIn("Напишите номер зала и причину задержки",response)
+        self.assertEqual(Record.objects.count(),0)
+        response=self.process(self.message("12.04 10:00–14:00 Фокус зал 1, задержалась съёмка"),edited=True)
+        self.assertIn("Записи обновлены",response)
+        self.assertEqual(Record.objects.count(),1)
+
     def test_real_telegram_reply_targets_original_message_and_topic(self):
         from aiogram.types import Message
         bot = AsyncMock()

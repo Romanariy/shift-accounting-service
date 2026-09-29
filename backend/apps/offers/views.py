@@ -229,7 +229,7 @@ def config(request):
         "coordinator": service.coordinator_id(), "auto_publish": service.quality_gate(),
         "workers": list(WorkerHeartbeat.objects.values("name", "updated_at", "detail")),
         "organizations": list(Organization.objects.filter(is_active=True).values("id", "name")),
-        "services": list(Service.objects.values("id", "name", "input_type", "active", "deleted_at", "default_organization")),
+        "services": list(Service.objects.values("id", "name", "input_type", "active", "deleted_at", "default_organization", "comment_required", "comment_hint")),
         "employees": [{"id": e.pk, "name": e.display_name} for e in Employee.objects.filter(is_active=True, telegram_user_id__isnull=False)],
         "contacts": list(TelegramContact.objects.values("id", "name", "user_id"))})
 

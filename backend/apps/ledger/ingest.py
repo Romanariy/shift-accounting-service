@@ -255,6 +255,9 @@ def ingest(text, *, chat_id, message_id, thread_id=None, user_id=None, username=
             r._state.db = old._state.db
             r.legacy_id, r.legacy_kind = old.legacy_id, old.legacy_kind
             r.calculation_version, r.daily_calculation_id = old.calculation_version, old.daily_calculation_id
+            if r.kind == old.kind and r.service_id == old.service_id:
+                for field in ("bonus", "bonus_reason", "base_amount", "overlap_factor", "calculation_note", "calculation_review"):
+                    setattr(r, field, getattr(old, field))
             if r.kind == "service" and r.service.input_type != "amount":
                 r.amount = old.amount
         r.source, r.author_id, r.author_name = "telegram", user_id, author_name or username

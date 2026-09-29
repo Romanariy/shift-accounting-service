@@ -155,7 +155,7 @@ class LedgerTests(TestCase):
         batch = self.batch()
         invoice = batch.invoices.get()
         workbook = load_workbook(BytesIO(bytes(invoice.artifact)), data_only=False)
-        self.assertEqual(workbook.sheetnames, ["Основной", "Смены", "Расходы"])
+        self.assertEqual(workbook.sheetnames, ["Основной", "Смены", "Расходы", "Полученные оплаты"])
         main_values = [cell.value for row in workbook["Основной"] for cell in row]
         self.assertIn("Починил дверь", main_values)
         self.assertNotIn("Малый админ", main_values)
@@ -279,7 +279,7 @@ class LedgerTests(TestCase):
         response = self.client.post("/api/shifts/ledger/records/", json.dumps(payload), content_type="application/json")
         self.assertEqual(response.status_code, 200, response.content)
         data = self.client.get("/api/shifts/ledger/records/").json()
-        self.assertEqual(data["employee_totals"][0]["total"], "100")
+        self.assertEqual(Decimal(data["employee_totals"][0]["total"]), Decimal("100"))
         response = self.client.post("/api/shifts/ledger/services/", json.dumps({"name":"Тест", "aliases":["сопр"]}), content_type="application/json")
         self.assertEqual(response.status_code, 400)
 
@@ -358,7 +358,7 @@ class LedgerTests(TestCase):
         self.assertEqual(response.status_code, 200, response.content)
         invoice.refresh_from_db()
         wb = load_workbook(BytesIO(bytes(invoice.artifact)))
-        self.assertEqual(wb.sheetnames, ["Основной"])
+        self.assertEqual(wb.sheetnames, ["Основной", "Полученные оплаты"])
         values = [c.value for row in wb.active for c in row]
         self.assertIn("Починил дверь", values)
         self.assertIn("Малый админ", values)

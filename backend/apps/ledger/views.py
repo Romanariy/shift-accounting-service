@@ -23,7 +23,7 @@ from .models import EarningsDelivery
 RESOURCES = {"services": Service, "rates": Rate, "accruals": Accrual, "preferences": EmployeePreference,
              "contacts": TelegramContact, "organizations": OrganizationBilling}
 FIELDS = {
-    "services": ("name", "aliases", "input_type", "frequency", "default_organization", "sheet", "sort_order", "active"),
+    "services": ("name", "aliases", "input_type", "frequency", "default_organization", "sheet", "sort_order", "active", "comment_required", "comment_hint"),
     "rates": ("service", "organization", "calculation", "price", "minimum", "maximum", "start", "end", "active"),
     "accruals": ("service", "organization", "employee", "start", "end", "active"),
     "preferences": ("employee", "service"),
@@ -111,6 +111,12 @@ def api(request, resource, pk=None, action=None):
 
 
 def read(request, resource, pk, action):
+    if resource == "receipts":
+        from .receipts import listing
+        return reply(listing(request.GET))
+    if resource == "overlap-decisions":
+        from .overlaps import review_day
+        return reply({"components": review_day(int(request.GET["employee"]), date.fromisoformat(request.GET["date"]))})
     if resource == "payments":
         rows = Invoice.objects.filter(batch__state="approved").exclude(payment_state="none").select_related("batch")
         open_count = rows.filter(payment_state="open").count()
@@ -165,7 +171,7 @@ def read(request, resource, pk, action):
         limit = min(250, max(1, int(request.GET.get("limit", 50))))
         return reply({"records": [serialized(r) for r in rows[offset:offset + limit]], "count": rows.count(), "limit": limit, "offset": offset,
                       "total": rows.aggregate(total=Sum("amount"))["total"] or "0",
-                      "review": rows.filter(Q(review=True) | ~Q(error="")).count(), "employee_totals": employee_totals})
+                      "review": rows.filter(Q(review=True) | Q(calculation_review=True) | ~Q(error="")).count(), "employee_totals": employee_totals})
     if resource == "batches":
         if pk:
             return reply(serialized(Batch.objects.get(pk=pk)))
@@ -212,6 +218,14 @@ def read(request, resource, pk, action):
 
 
 def mutate(request, resource, pk, action, payload):
+    if resource == "receipts":
+        from .receipts import save
+        if request.method == "POST" and not pk or request.method in ("PUT", "DELETE") and pk:
+            return reply(save(payload, pk, delete=request.method == "DELETE"))
+        return reply({"error": "Метод не поддерживается."}, 405)
+    if resource == "overlap-decisions" and request.method == "POST":
+        from .overlaps import decide
+        return reply(decide(payload))
     if resource == "record-preview" and request.method == "POST":
         return reply(preview_record(payload))
     if resource == "earnings-deliveries" and pk and action == "retry" and request.method == "POST":
