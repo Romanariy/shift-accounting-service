@@ -6,9 +6,34 @@ for(const ext of [".ts",".tsx"])require.extensions[ext]=(module,filename)=>modul
 const Receipts=require("../src/components/OrganizationReceipts").default;
 const Editor=require("../src/components/ServiceRecordEditor").default;
 const Overlap=require("../src/components/OverlapReview").default;
+const Details=require("../src/components/CalculationDetails").default;
+const Recalculation=require("../src/components/RecalculationPreview").default;
 const text=n=>typeof n==="string"?n:!n?"":Array.isArray(n)?n.map(text).join(""):text(n.children);
 const response=d=>({ok:true,json:async()=>d});
 const button=(root,label)=>root.findAllByType("button").find(n=>text(n)===label);
+
+test("calculation details omit zero bonus and its reason",()=>{
+  let r;
+  act(()=>{r=create(React.createElement(Details,{record:{base_amount:"600",bonus:"0.00",bonus_reason:"Старая причина"}}));});
+  assert.doesNotMatch(text(r.toJSON()),/доплата|Старая причина/);
+  act(()=>r.update(React.createElement(Details,{record:{base_amount:"600",bonus:"500",bonus_reason:"Выход"}})));
+  assert.match(text(r.toJSON()),/доплата 500/);
+  assert.match(text(r.toJSON()),/Выход/);
+  act(()=>r.unmount());
+});
+
+test("recalculation shows only changed members and handles no changes",()=>{
+  const preview={changes:[{id:2}],errors:[],groups:[{date:"2026-09-29",organization:"Студия",service:"Смена",members:[{id:1,before:"600",after:"600",employee_name:"Без изменений"},{id:2,before:"500",after:"600",employee_name:"Изменён"}]}]};
+  const props={preview,busy:false,onClose(){},onApply(){}};
+  let r;act(()=>{r=create(React.createElement(Recalculation,props));});
+  assert.doesNotMatch(text(r.toJSON()),/Без изменений|Запись №1/);
+  assert.match(text(r.toJSON()),/Запись №2/);
+  act(()=>r.update(React.createElement(Recalculation,{...props,preview:{...preview,changes:[]}})));
+  assert.match(text(r.toJSON()),/Изменений нет/);
+  assert.equal(r.root.findAllByType("table").length,0);
+  assert.equal(button(r.root,"Применить проверенный пересчёт").props.disabled,true);
+  act(()=>r.unmount());
+});
 
 test("studio receipt form adds a deduction with a reason and shows separate balances",async t=>{
   const writes=[];

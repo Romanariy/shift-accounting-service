@@ -138,6 +138,31 @@ class OverlapAndReceiptTests(TestCase):
         b.refresh_from_db();self.assertEqual(b.amount,500)
         self.assertEqual(recalculate(self.day,self.day)["changes"],[])
 
+    def test_recalculation_ignores_metadata_and_only_writes_changed_rows(self):
+        unchanged = self.shift(0,"10:00","14:00")
+        changed = self.shift(0,"16:00","18:00")
+        Record.objects.filter(pk=unchanged.pk).update(base_amount=None, calculation_version=0)
+        Record.objects.filter(pk=changed.pk).update(amount=100)
+        unchanged.refresh_from_db()
+        stamp = unchanged.updated_at
+        preview = recalculate(self.day,self.day)
+        self.assertEqual([r["id"] for r in preview["changes"]], [changed.pk])
+        self.assertEqual([r["id"] for g in preview["groups"] for r in g["members"]], [changed.pk])
+        recalculate(self.day,self.day,preview["fingerprint"])
+        unchanged.refresh_from_db()
+        self.assertEqual(unchanged.updated_at, stamp)
+        self.assertIsNone(unchanged.base_amount)
+        repeated = recalculate(self.day,self.day)
+        self.assertEqual(repeated["changes"], [])
+        self.assertEqual(repeated["groups"], [])
+
+    def test_recalculation_explains_status_change_with_same_amount(self):
+        row = self.shift(0,"10:00","14:00")
+        Record.objects.filter(pk=row.pk).update(error="Нет тарифа")
+        preview = recalculate(self.day,self.day)
+        self.assertEqual(len(preview["changes"]), 1)
+        self.assertEqual(preview["groups"][0]["members"][0]["change_reason"], "Исправлена ошибка расчёта")
+
     def test_receipts_isolation_history_and_invoice_snapshot(self):
         self.shift(0,"10:00","14:00")
         payload = {"organization":self.orgs[0].pk,"date":str(self.day),"payer":"=Клиент","amount":"1234.50"}
