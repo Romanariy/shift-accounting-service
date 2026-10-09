@@ -128,11 +128,30 @@ def finish_offer(job, images, results, result, elapsed_ms):
     offer.organization_id = result["organization"]
     offer.intervals, offer.questions, offer.evidence = result["intervals"], result["questions"], result["evidence"]
     offer.evidence["elapsed_ms"] = elapsed_ms
-    if offer.organization_id not in allowed_organizations(offer.sender_id):
+    allowed = allowed_organizations(offer.sender_id)
+    for index, item in enumerate(offer.evidence.get("images", [])):
+        if item.get("organization") is not None and item["organization"] not in allowed:
+            item["organization"] = None
+            for interval in offer.intervals:
+                if interval.get("image_index") == index:
+                    interval["organization"] = None
+            offer.questions.insert(0, {"key": f"image:{index}:organization", "label": f"Фото {index + 1}: нет права на студию. Выберите разрешённую.", "type": "organization"})
+    offer.parts.all().delete()
+    if result.get("parts"):
+        from .parts import replace
+        known = [p for p in result["parts"] if p["organization"] in allowed]
+        if known:
+            intervals = offer.intervals
+            replace(offer, known)
+            offer.intervals = intervals
+    if offer.organization_id is not None and offer.organization_id not in allowed:
         offer.organization_id = None
         if not any(q["key"] == "organization" for q in offer.questions):
             offer.questions.insert(0, {"key": "organization", "label": "Нет права на найденную организацию. Выберите разрешённую.", "type": "organization"})
-    recompute(offer)
+    from .parts import assign_images
+    assign_images(offer)
+    if not offer.parts.exists():
+        recompute(offer)
     offer.state = "needs_input" if offer.questions else "review"
     changed(offer, "recognized", "ocr", before)
     if not offer.questions and quality_gate():

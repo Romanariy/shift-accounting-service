@@ -67,8 +67,20 @@ def create(data, *, user_id=None, sender_name="Администратор сай
         if previous.sender_id != sender:
             raise ValidationError("Чужое предложение.")
         return previous
-    offer = ShiftOffer(source_key=key, sender_id=sender, sender_name=sender_name[:160], kind="service", state="review")
-    fill(offer, data)
+    kind = data.get("kind", "service")
+    if kind not in ("shift", "service"):
+        raise ValidationError("Неизвестный тип предложения.")
+    offer = ShiftOffer(source_key=key, sender_id=sender, sender_name=sender_name[:160], kind=kind, state="review")
+    if kind == "shift":
+        from .parts import replace
+        offer.date = date.fromisoformat(str(data["date"]))
+        offer.comment = str(data.get("comment", ""))[:4000]
+        offer.save()
+        replace(offer, data.get("parts") or [data])
+    else:
+        if data.get("parts"):
+            raise ValidationError("Объединение доступно только для смен.")
+        fill(offer, data)
     service.validate_publish(offer)
     service.changed(offer, "created", f"telegram:{sender}" if user_id else "web")
     return offer
@@ -91,9 +103,9 @@ def edit(offer_id, data, *, user_id=None, version=None):
 
 
 @transaction.atomic
-def attach(offer_id, path, digest, message_id, *, user_id=None, version=None, file_id=""):
+def attach(offer_id, path, digest, message_id, *, user_id=None, version=None, file_id="", part_id=None):
     service.lock()
-    offer = ShiftOffer.objects.get(pk=offer_id, kind="service")
+    offer = ShiftOffer.objects.get(pk=offer_id)
     service.authorize_edit(offer, user_id)
     service.require_current(offer, version)
     if offer.state != "review":
@@ -103,6 +115,9 @@ def attach(offer_id, path, digest, message_id, *, user_id=None, version=None, fi
         return offer
     if offer.images.count() >= 10:
         raise ValidationError("Можно приложить не более 10 фотографий.")
-    OfferImage.objects.create(offer=offer, path=path, sha256=digest, message_id=message_id, telegram_file_id=file_id)
+    part = None
+    if offer.kind == "shift":
+        part = offer.parts.get(pk=int(part_id)) if part_id else offer.parts.get()
+    OfferImage.objects.create(offer=offer, part=part, path=path, sha256=digest, message_id=message_id, telegram_file_id=file_id)
     service.changed(offer, "image_received", f"telegram:{user_id}" if user_id else "web")
     return offer

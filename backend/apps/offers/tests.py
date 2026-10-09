@@ -357,7 +357,7 @@ class RecognitionRuleTests(SimpleTestCase):
             image={"date":"2026-09-12","date_ambiguous":False,"headers":["БОХО"],"issues":[issue],
                 "intervals":[{"room":"БОХО","start":"13:00","end":"16:00"}]}
             result=merge_results([image],[{"organization":1,"rooms":[{"name":"БОХО"}]}])
-            self.assertIn("intervals",[q["key"] for q in result["questions"]])
+            self.assertIn("image:0:intervals",[q["key"] for q in result["questions"]])
 
     def test_year_rollover_and_past_confirmation(self):
         self.assertEqual(nearest_date(2,1,date(2026,12,30)),("2027-01-02",False))

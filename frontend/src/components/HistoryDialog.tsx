@@ -5,7 +5,7 @@ import { dateLabel, dateTimeLabel } from "./date-format";
 import type { Bootstrap, Item } from "./accounting-types";
 
 const fields: Record<string, string> = {
-  bonus:"Доплата", bonus_reason:"Причина доплаты", base_amount:"База", overlap_factor:"Коэффициент", calculation_note:"Расчёт", calculation_review:"Расчёт требует проверки", payer:"Плательщик", reason:"Причина вычета",
+  actual_hours:"Фактические часы", overlap_hours:"Пересекающиеся часы", payable_hours:"Оплачиваемые часы", pricing_version:"Версия алгоритма", bonus:"Доплата", bonus_reason:"Причина доплаты", base_amount:"База", overlap_factor:"Коэффициент", calculation_note:"Расчёт", calculation_review:"Расчёт требует проверки", payer:"Плательщик", reason:"Причина вычета",
   id: "Номер записи", kind: "Вид записи", date: "Дата", organization: "Организация", organizationId: "Организация",
   daily_calculation: "Дневной расчёт", calculation_version: "Версия расчёта",
   organization_name: "Организация", employee: "Исполнитель", employeeId: "Исполнитель", employee_name: "Имя исполнителя",

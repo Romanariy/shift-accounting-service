@@ -3,7 +3,7 @@ from functools import wraps
 
 from django.core.exceptions import ObjectDoesNotExist, ValidationError, RequestDataTooBig
 from django.db import transaction
-from django.db.models import F, Case, When, Value, CharField
+from django.db.models import F, Case, When, Value, CharField, Q
 from django.http import FileResponse, JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
@@ -54,7 +54,7 @@ def serialize_offer(offer, detail=False):
         from .updates import preview
         data["update_preview"] = preview(offer)
         data.update(images=[{"id": i.pk, "url": f"/api/shifts/ledger/offer-images/{i.pk}/" if not i.purged_at else None,
-            "purged_at": i.purged_at, "recognized": i.recognized, "active": i.active} for i in offer.images.all()],
+            "purged_at": i.purged_at, "recognized": i.recognized, "active": i.active, "part": i.part_id} for i in offer.images.all()],
             jobs=list(offer.jobs.order_by("-id").values("id", "state", "attempts", "elapsed_ms", "error")[:20]),
             deliveries=list(offer.deliveries.order_by("id").values("id", "purpose", "recipient", "thread_id", "state", "message_ids", "error", "delete_requested", "deleted_at",
                 edit_state=F("offermessageedit__state"), edit_error=F("offermessageedit__error"))),
@@ -79,7 +79,10 @@ def offers(request, pk=None, action=None):
             query = query.filter(state="cancelled")
         else:
             query = query.exclude(state="cancelled")
-        for field in ("state", "organization", "date", "kind", "employee"):
+        if request.GET.get("organization"):
+            org = int(request.GET["organization"])
+            query = query.filter(Q(organization_id=org) | Q(parts__organization_id=org)).distinct()
+        for field in ("state", "date", "kind", "employee"):
             if request.GET.get(field):
                 query = query.filter(**{field: request.GET[field]})
         if request.GET.get("service") == "free":
@@ -109,7 +112,7 @@ def offers(request, pk=None, action=None):
             raise ValidationError("Загрузите изображение размером до 10 МБ.")
         path, digest = store_image(upload.read())
         try:
-            result = attach(pk, path, digest, int(request.POST["message_id"]), version=int(request.POST["version"]))
+            result = attach(pk, path, digest, int(request.POST["message_id"]), version=int(request.POST["version"]), part_id=request.POST.get("part"))
         except Exception:
             remove_image(path)
             raise

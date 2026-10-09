@@ -33,14 +33,14 @@ class OverlapAndReceiptTests(TestCase):
     def post(self, resource, payload):
         return self.client.post(f"/api/shifts/ledger/{resource}/", json.dumps(payload), content_type="application/json")
 
-    def test_one_minute_overlap_halves_clamped_base_and_keeps_bonus(self):
+    def test_one_minute_overlap_prices_only_shared_time_then_minimum_and_bonus(self):
         a = self.shift(0, "08:00", "16:00")
         b = self.shift(1, "15:59", "17:59", bonus="500", bonus_reason="Срочный выход")
         a.refresh_from_db()
         self.assertEqual(a.amount, 1500)
-        self.assertEqual((b.base_amount, b.overlap_factor, b.bonus, b.amount), (Decimal(600), Decimal(".5"), Decimal(500), Decimal(800)))
+        self.assertEqual((b.base_amount, b.overlap_factor, b.bonus, b.amount), (Decimal(600), Decimal(".5"), Decimal(500), Decimal(1100)))
         b = save_record({"description": "Комментарий"}, b)
-        self.assertEqual(b.amount, 800)
+        self.assertEqual(b.amount, 1100)
         save_record({"start_time": "16:00", "end_time": "18:00"}, b)
         b.refresh_from_db()
         self.assertEqual(b.amount, 1100)
@@ -68,16 +68,16 @@ class OverlapAndReceiptTests(TestCase):
         Rate.objects.filter(service=self.service, organization=self.orgs[1]).update(price=200)
         save_record({"units":"4", "bonus_reason":"Изменение"}, b)
         a.refresh_from_db(); b.refresh_from_db()
-        self.assertEqual((a.amount, b.amount), (400, 800))
+        self.assertEqual((a.amount, b.amount), (600, 800))
 
     def test_all_studio_records_share_factor_delete_restores_other_studio(self):
         a = self.shift(0, "08:00", "12:00")
         a2 = self.shift(0, "14:00", "18:00")
         b = self.shift(1, "11:00", "15:00")
-        self.assertEqual(b.amount, 400)
+        self.assertEqual(b.amount, 600)
         delete_record(a2)
         a.refresh_from_db(); b.refresh_from_db()
-        self.assertEqual((a.amount, b.amount), (400, 800))
+        self.assertEqual((a.amount, b.amount), (700, 800))
         delete_record(a)
         b.refresh_from_db()
         self.assertEqual(b.amount, 800)
@@ -109,7 +109,7 @@ class OverlapAndReceiptTests(TestCase):
                    "date":str(self.day),"start_time":"12:00","end_time":"16:00","bonus":"100","bonus_reason":"Выход"}
         count = Record.objects.count()
         preview = preview_record(payload)["record"]
-        self.assertEqual(Decimal(preview["amount"]), 500)
+        self.assertEqual(Decimal(preview["amount"]), 700)
         self.assertEqual(Record.objects.count(),count)
         save_record({"end_time":"17:00"},a)
         with self.assertRaisesMessage(ValidationError,"Данные изменились"):
@@ -125,7 +125,7 @@ class OverlapAndReceiptTests(TestCase):
         b = save_record({"kind":"service","service":self.service.pk,"organization":self.orgs[1].pk,"employee":self.employee.pk,
                          "date":str(self.day),"start_time":"10:00","end_time":"18:00"},allow_frozen=True)
         a.refresh_from_db();inv.refresh_from_db()
-        self.assertEqual(a.amount,400)
+        self.assertEqual(a.amount,600)
         self.assertEqual(bytes(inv.artifact),b"saved")
 
     def test_historical_recalculation_preview_and_bonus_idempotence(self):
@@ -135,7 +135,7 @@ class OverlapAndReceiptTests(TestCase):
         preview = recalculate(self.day,self.day)
         b.refresh_from_db();self.assertEqual(b.amount,900)
         recalculate(self.day,self.day,preview["fingerprint"])
-        b.refresh_from_db();self.assertEqual(b.amount,500)
+        b.refresh_from_db();self.assertEqual(b.amount,700)
         self.assertEqual(recalculate(self.day,self.day)["changes"],[])
 
     def test_recalculation_ignores_metadata_and_only_writes_changed_rows(self):
@@ -225,13 +225,13 @@ class OverlapAndReceiptTests(TestCase):
         with self.assertRaisesMessage(ValidationError,self.service.comment_hint):
             save_record({"description":"  "}, result)
 
-    def test_fractional_kopecks_halve_studio_total_once(self):
+    def test_fractional_kopecks_round_each_record_after_weighting_hours(self):
         Rate.objects.filter(service=self.service).update(minimum=None,maximum=None,price="100.01")
         self.shift(0,"08:00","18:00")
         a=self.shift(1,"10:00","11:00")
         b=self.shift(1,"11:00","12:00")
         a.refresh_from_db()
-        self.assertEqual(a.amount+b.amount,Decimal("100.01"))
+        self.assertEqual(a.amount+b.amount,Decimal("100.02"))
 
     def test_deductions_reduce_only_receipt_balance_and_are_snapshotted(self):
         self.shift(0,"10:00","14:00")

@@ -22,25 +22,42 @@ def normalize(value):
 
 
 def canonical(offer, intervals=None):
-    profile = RecognitionProfile.objects.filter(organization_id=offer.organization_id).first()
     aliases = {}
-    for room in profile.rooms if profile else []:
-        for alias in [room["name"], *room.get("aliases", [])]:
-            aliases[normalize(alias)] = normalize(room["name"])
-    return sorted({(aliases.get(normalize(i.get("room", "")), normalize(i.get("room", ""))),
+    for profile in RecognitionProfile.objects.filter(organization_id__in=organization_ids(offer)):
+        aliases[profile.organization_id] = {normalize(alias): normalize(room["name"])
+            for room in profile.rooms for alias in [room["name"], *room.get("aliases", [])]}
+    return sorted({(i.get("organization", offer.organization_id),
+                    aliases.get(i.get("organization", offer.organization_id), {}).get(normalize(i.get("room", "")), normalize(i.get("room", ""))),
                     str(i.get("start") or "")[:5], str(i.get("end") or "")[:5])
-                   for i in (offer.intervals if intervals is None else intervals)})
+                   for i in (schedule_intervals(offer) if intervals is None else intervals)})
+
+
+def organization_ids(offer):
+    from .parts import values
+    return {p["organization"] for p in values(offer)}
+
+
+def schedule_intervals(offer):
+    from .parts import values
+    return [{**i, "organization": p["organization"]} for p in values(offer) for i in p["intervals"]]
 
 
 def candidates(offer):
-    return ShiftOffer.objects.filter(kind="shift", organization_id=offer.organization_id, date=offer.date,
+    query = ShiftOffer.objects.filter(kind="shift", date=offer.date,
         state__in=TARGET_STATES, update_target=None,
         start_time__isnull=False, end_time__isnull=False).filter(
-            Q(pk__lt=offer.pk) | Q(state__in=("open", "claimed", "publishing"))).exclude(pk=offer.pk).order_by("id")
+            Q(pk__lt=offer.pk) | Q(state__in=("open", "claimed", "publishing"))).exclude(pk=offer.pk)
+    for org in organization_ids(offer):
+        query = query.filter(Q(organization_id=org) | Q(parts__organization_id=org))
+    return query.distinct().order_by("id")
 
 
 def same(left, right):
-    return canonical(left) == canonical(right) and left.start_time == right.start_time and left.end_time == right.end_time
+    from .parts import values
+    ids = organization_ids(left)
+    return canonical(left) == canonical(right, [i for i in schedule_intervals(right) if i["organization"] in ids]) and {
+        p["organization"]: (p["start_time"], p["end_time"]) for p in values(left)} == {
+        p["organization"]: (p["start_time"], p["end_time"]) for p in values(right) if p["organization"] in ids}
 
 
 def prepare(offer):
@@ -62,7 +79,8 @@ def prepare(offer):
 
 
 def merged_intervals(draft, target, mode):
-    items = deepcopy(target.intervals if mode == "merge" else []) + deepcopy(draft.intervals)
+    ids = organization_ids(draft)
+    items = deepcopy([i for i in schedule_intervals(target) if mode == "merge" or i["organization"] not in ids]) + deepcopy(schedule_intervals(draft))
     seen, result = set(), []
     for item in items:
         key = tuple(canonical(draft, [item])[0])
@@ -125,7 +143,7 @@ def apply(pk, *, user_id=None, version=None):
     target = ShiftOffer.objects.get(pk=draft.update_target_id)
     service.authorize_edit(target, user_id)
     service.require_current(target, draft.update_target_version)
-    if target.state not in TARGET_STATES or target.organization_id != draft.organization_id or target.date != draft.date:
+    if target.state not in TARGET_STATES or not organization_ids(draft) <= organization_ids(target) or target.date != draft.date:
         raise ValidationError("Исходная смена закрыта или изменена. Обновите сравнение.")
     before = service.snapshot(target)
     target.intervals = merged_intervals(draft, target, draft.update_mode)
@@ -138,17 +156,26 @@ def apply(pk, *, user_id=None, version=None):
         service.validate_publish(target)
     # Each row owns its own file; purging the source draft cannot remove current photos.
     if draft.update_mode == "replace":
-        target.images.update(active=False)
-    existing = set(target.images.filter(active=True).values_list("sha256", flat=True))
+        target.images.filter(Q(part__organization_id__in=organization_ids(draft)) |
+                             Q(part__isnull=True, offer__organization_id__in=organization_ids(draft))).update(active=False)
+    # Normalize legacy single-studio targets before assigning copied images.
+    if not target.parts.exists():
+        from .parts import from_intervals
+        from_intervals(target)
+        target.images.filter(part=None).update(part=target.parts.first())
+    mapping = {p.organization_id: p for p in target.parts.all()}
+    existing = {(org or target.organization_id, digest) for org, digest in
+                target.images.filter(active=True).values_list("part__organization_id", "sha256")}
     next_message = min([0, *target.images.values_list("message_id", flat=True)]) - 1
     for image in draft.images.filter(active=True, purged_at=None):
-        if image.sha256 in existing:
+        org = image.part.organization_id if image.part_id else draft.organization_id
+        if (org, image.sha256) in existing:
             continue
         path = f"images/{uuid4().hex}.png"
         shutil.copyfile(media_path(image.path), media_path(path))
-        OfferImage.objects.create(offer=target, path=path, sha256=image.sha256, message_id=next_message,
+        OfferImage.objects.create(offer=target, part=mapping[org], path=path, sha256=image.sha256, message_id=next_message,
             telegram_file_id=image.telegram_file_id, recognized=image.recognized)
-        existing.add(image.sha256)
+        existing.add((org, image.sha256))
         next_message -= 1
     target.delivery_generation += 1
     actor = f"telegram:{user_id}" if user_id else "web"
@@ -164,12 +191,16 @@ def apply(pk, *, user_id=None, version=None):
             service.enqueue(target, "assignment", recipient)
     else:
         service.enqueue(target, "review", target.sender_id)
-    from .presentation import describe
-    def lines(items):
-        return "\n".join(f'{i.get("room", "")} {i.get("start")}–{i.get("end")}' for i in items)
+    from .presentation import describe, booking_lines
+    from .parts import values
+    old_parts = {p["organization"]: p for p in before["parts"]}
+    changes = "\n".join(f'{p["organization_name"]}: было {old_parts[p["organization"]]["start_time"]:%H:%M}–{old_parts[p["organization"]]["end_time"]:%H:%M}, '
+                        f'стало {p["start_time"]:%H:%M}–{p["end_time"]:%H:%M}' for p in values(target)
+                        if p["organization"] in organization_ids(draft))
     text = ("Расписание обновлено\n" + describe(target) +
         f'\nБыло: {before["start_time"]:%H:%M}–{before["end_time"]:%H:%M}\nСтало: {target.start_time:%H:%M}–{target.end_time:%H:%M}' +
-        "\nПрежние записи:\n" + lines(before["intervals"])[:1100] + "\nНовые записи:\n" + lines(target.intervals)[:1100])
+        "\n" + changes + "\nПрежние записи:\n" + booking_lines(target, before["intervals"], before["parts"])[:1100] +
+        "\nНовые записи:\n" + booking_lines(target, target.intervals)[:1100])
     service.enqueue(target, "update_notice", config.chat_id, thread_id=config.released_thread_id, payload={"text": text})
     if target.assignee_user_id:
         service.enqueue(target, "update_notice", target.assignee_user_id, payload={"text": text})

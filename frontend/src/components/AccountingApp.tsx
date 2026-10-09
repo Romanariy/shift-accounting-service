@@ -233,7 +233,7 @@ export default function AccountingApp() {
     <td><strong>{r.kind==="service"?r.service_name:r.description}</strong><small>{r.kind==="service"?r.description:labels[r.kind]}</small><SharedShiftDetails group={r.daily_group}/></td>
     <td>{r.employee_name || "—"}</td><td>{["time","quantity"].includes(r.input_type)?r.units:"—"}{r.start_time && <small>{r.start_time.slice(0,5)}–{r.end_time?.slice(0,5)}</small>}</td>
     <td className="right amount">{rub(r.amount)}<CalculationDetails record={r}/></td><td><span className={`pill ${r.review || r.error || r.calculation_review?"warning":""}`}>{r.review || r.error || r.calculation_review?"Проверить":"Учтено"}</span>{r.error && <small>{r.error}</small>}</td>
-    <td><div className="row-actions">{r.calculation_review&&<button onClick={()=>setOverlapRecord(r)} title="Разобрать пересечение" aria-label="Разобрать пересечение">½</button>}
+    <td><div className="row-actions">{r.employee&&["small_admin","big_admin"].includes(data?.services.find(s=>s.id===r.service)?.legacy_code)&&<button onClick={()=>setOverlapRecord(r)} title="Разобрать пересечение" aria-label="Разобрать пересечение">½</button>}
       <span className="action-tooltip" data-tooltip="Изменить запись"><button disabled={busy} onClick={()=>editRecord(r.kind,r)} title="Изменить запись" aria-label="Изменить запись">✎</button></span>
       <span className="action-tooltip" data-tooltip="История изменений"><button disabled={busy} onClick={()=>inspectHistory(r)} title="История изменений" aria-label="История изменений">◷</button></span>
       <span className="action-tooltip" data-tooltip="Удалить запись"><button disabled={busy} onClick={()=>removeRecord(r)} title="Удалить запись" aria-label="Удалить запись">×</button></span>

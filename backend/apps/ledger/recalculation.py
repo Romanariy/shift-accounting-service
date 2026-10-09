@@ -51,6 +51,8 @@ def recalculate_independent(start, end, fingerprint=None):
                          "members": [{"id": r.pk, "employee_name": r.employee_name, "hours": str(r.units),
                                       "before": before[r.pk]["amount"], "after": str(r.amount), "base_amount": str(r.base_amount),
                                       "overlap_factor": str(r.overlap_factor), "bonus": str(r.bonus),
+                                      "actual_hours": str(r.actual_hours), "overlap_hours": str(r.overlap_hours),
+                                      "payable_hours": str(r.payable_hours), "pricing_version": r.pricing_version,
                                       "calculation_note": r.calculation_note,
                                       "change_reason": ("Требуется проверка расчёта" if r.calculation_review else "Проверка расчёта завершена")
                                       if bool(before[r.pk].get("calculation_review")) != r.calculation_review

@@ -70,8 +70,10 @@ def callback_action(data, user_id, chat_id, message_id):
     if action == "field" and len(parts) == 5 and parts[4] in ("date", "organization", "start_time", "end_time", "comment"):
         service.enqueue(offer, "question", user_id, suffix=parts[4], prompt_key=parts[4])
         return "Уточнение придёт отдельным сообщением."
-    if action == "org" and len(parts) == 5 and any(d.prompt_key == "organization" and not d.reply_resolved for d in deliveries):
-        service.answer(offer.pk, {"organization": int(parts[4])}, user_id=user_id, version=int(version))
+    org_prompt = next((d.prompt_key for d in deliveries if not d.reply_resolved and
+                       (d.prompt_key == "organization" or d.prompt_key.endswith(":organization"))), None)
+    if action == "org" and len(parts) == 5 and org_prompt:
+        service.answer(offer.pk, {org_prompt: int(parts[4])}, user_id=user_id, version=int(version))
         return "Организация сохранена."
     raise ValidationError("Кнопка больше недоступна.")
 
@@ -95,7 +97,7 @@ def reply_to_question(user_id, reply_id, text):
         return False
     delivery = deliveries[0]
     value = text.strip()
-    if delivery.prompt_key == "intervals":
+    if delivery.prompt_key == "intervals" or delivery.prompt_key.endswith(":intervals"):
         values = [re.fullmatch(r"\s*(\d{1,2}:\d{2})\s*[-–—]\s*(\d{1,2}:\d{2})\s*", part)
                   for part in re.split(r"[,;\n]", value)]
         if not values or any(match is None for match in values):

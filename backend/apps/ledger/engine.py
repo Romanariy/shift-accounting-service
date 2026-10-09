@@ -42,7 +42,7 @@ def rate_for(service_id, organization_id, day):
     return rates[0]
 
 
-def calculate(record):
+def calculate(record, units=None):
     if record.kind != "service":
         if record.amount <= 0:
             raise ValidationError("Сумма должна быть положительной.")
@@ -53,7 +53,7 @@ def calculate(record):
             raise ValidationError("Укажите положительную стоимость услуги.")
         amount = record.amount
     elif rate.calculation in ("hourly", "quantity"):
-        amount = rate.price * record.units
+        amount = rate.price * (record.units if units is None else units)
     else:
         amount = rate.price
     if rate.minimum is not None and amount > 0:

@@ -4,7 +4,7 @@ import unicodedata
 from datetime import date
 from difflib import SequenceMatcher
 
-ENGINE_VERSION = "yclients-ios-2"
+ENGINE_VERSION = "yclients-ios-3-parts"
 MONTHS = {name: i + 1 for i, name in enumerate(("января", "февраля", "марта", "апреля", "мая", "июня",
     "июля", "августа", "сентября", "октября", "ноября", "декабря"))}
 TIME = re.compile(r"(?<!\d)([012]?\d)\s*[:.]\s*([0-5]\d)(?!\d)")
@@ -311,9 +311,10 @@ def merge_results(results, profiles):
         if org:
             organizations.add(org)
         for item in result.get("intervals", []):
-            item = {**item, "image_index": index}
+            item = {**item, "image_index": index, "organization": org}
             existing_index = next((number for number, old in enumerate(intervals)
                 if number not in matched_existing and old["image_index"] != index
+                and org is not None and old.get("organization") == org
                 and normalize(old["room"]) == normalize(item["room"])
                 and old.get("start") and old["start"] == item.get("start")
                 and (old.get("end") == item.get("end") or not old.get("end") or not item.get("end"))), None)
@@ -324,24 +325,28 @@ def merge_results(results, profiles):
                     existing.update(item)
             else:
                 intervals.append(item)
-    split_required = len(dates) > 1 or len(organizations) > 1
+    split_required = len(dates) > 1 or len(organizations) > 2
     if split_required:
         questions.append({"key": "split", "label": "В альбоме разные даты или организации. Выберите изображения для отдельных предложений на сайте.", "type": "split"})
     if len(dates) != 1 or any(r.get("date_ambiguous", True) for r in results):
         questions.append({"key": "date", "label": "Укажите полную дату смены (ДД.ММ.ГГГГ).", "type": "date"})
-    if len(organizations) != 1 or any(match_organization(r.get("headers", []), profiles)[0] is None for r in results):
-        questions.append({"key": "organization", "label": "Выберите организацию по залам.", "type": "organization"})
-    if any(not r.get("intervals") or set(r.get("issues", [])) &
-           {"partial_booking", "unreadable_booking", "partial_booking_at_bottom"} for r in results):
-        questions.append({"key": "intervals", "label": "Не все записи видны. Укажите интервалы каждой записи через запятую (13:00–16:00, 16:30–20:00) или пришлите новый полный альбом.", "type": "intervals"})
+    image_orgs = [match_organization(r.get("headers", []), profiles)[0] for r in results]
+    for index, result in enumerate(results):
+        if image_orgs[index] is None:
+            questions.append({"key": f"image:{index}:organization", "label": f"Фото {index + 1}: выберите студию по залам.", "type": "organization"})
+        if not result.get("intervals") or set(result.get("issues", [])) & {"partial_booking", "unreadable_booking", "partial_booking_at_bottom"}:
+            questions.append({"key": f"image:{index}:intervals", "label": f"Фото {index + 1}: не все записи видны. Укажите все интервалы этого снимка (13:00–16:00, 16:30–20:00).", "type": "intervals"})
     for index, item in enumerate(intervals):
         for field in ("start", "end"):
             weak = "uncertain_header" in item.get("issues", [])
             grid_agrees = item.get("evidence", {}).get("grid_"+field) == item.get(field) and bool(item.get(field))
             if not item.get(field) or (weak and not grid_agrees):
-                questions.append({"key": f"interval:{index}:{field}", "label": f"Запись {index + 1}, {item['room']}: уточните {'начало' if field == 'start' else 'окончание'} (ЧЧ:ММ).", "type": "time"})
+                questions.append({"key": f"interval:{index}:{field}", "label": f"Фото {item['image_index'] + 1}, запись {index + 1}, {item['room']}: уточните {'начало' if field == 'start' else 'окончание'} (ЧЧ:ММ).", "type": "time"})
     return {"date": next(iter(dates)) if len(dates) == 1 else None,
             "organization": next(iter(organizations)) if len(organizations) == 1 else None,
+            "parts": [{"organization": org, "intervals": [i for i in intervals if i.get("organization") == org]}
+                      for org in sorted(organizations)] if not split_required else [],
             "intervals": intervals, "questions": questions,
             "evidence": {"engine_version": ENGINE_VERSION, "auto_candidate": not questions,
-                         "images": [{"headers": r.get("headers", []), "issues": r.get("issues", [])} for r in results]}}
+                         "images": [{"headers": r.get("headers", []), "issues": r.get("issues", []), "organization": org}
+                                    for r, org in zip(results, image_orgs)]}}

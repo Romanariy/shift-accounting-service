@@ -53,9 +53,12 @@ def authorize_edit(offer, user_id):
     if user_id != coordinator_id() and user_id != offer.sender_id:
         raise ValidationError("Изменить предложение может его отправитель или главный администратор.")
     authorize_sender(user_id, offer.organization_id)
+    for part in offer.parts.all():
+        authorize_sender(user_id, part.organization_id)
 
 
 def snapshot(offer):
+    from .parts import values
     return {"kind": offer.kind, "service": offer.service_id, "service_name": offer.service_name,
             "input_type": offer.input_type, "units": offer.units, "amount": offer.amount,
             "update_target": offer.update_target_id, "update_target_version": offer.update_target_version,
@@ -63,7 +66,8 @@ def snapshot(offer):
             "state": offer.state, "date": offer.date, "organization": offer.organization_id,
             "start_time": offer.start_time, "end_time": offer.end_time, "employee": offer.employee_id,
             "employee_name": offer.employee_name, "comment": offer.comment, "version": offer.version,
-            "intervals": deepcopy(offer.intervals), "questions": deepcopy(offer.questions), "author": offer.sender_id}
+            "intervals": deepcopy(offer.intervals), "questions": deepcopy(offer.questions), "author": offer.sender_id,
+            "parts": values(offer) if offer.kind == "shift" else []}
 
 
 def changed(offer, action, actor, before=None):
@@ -101,7 +105,7 @@ def reconcile_message(delivery, offer):
 
 def enqueue(offer, purpose, recipient, *, thread_id=None, suffix="", prompt_key="", payload=None):
     if purpose in PHOTO_PURPOSES:
-        ids = list(dict((digest, pk) for pk, digest in offer.images.filter(active=True, purged_at=None).values_list("id", "sha256")).values())
+        ids = list(dict(((part, digest), pk) for pk, part, digest in offer.images.filter(active=True, purged_at=None).values_list("id", "part_id", "sha256")).values())
         if not ids:
             return None
         payloads = [{"image_ids": ids[i:i + 10]} for i in range(0, len(ids), 10)]
@@ -175,6 +179,12 @@ def receive_image(user_id, sender_name, source_key, message_id, path, sha256, fi
 
 
 def end_at(offer):
+    if offer.kind == "shift" and offer.pk and offer.date:
+        from .parts import values
+        parts = values(offer)
+        if parts:
+            return max((timezone.make_aware(datetime.combine(offer.date, p["end_time"]))
+                        for p in parts if p["end_time"]), default=None)
     if offer.kind == "service" and offer.date and not offer.start_time and not offer.end_time:
         return timezone.make_aware(datetime.combine(offer.date + timedelta(days=1), time.min))
     if not (offer.date and offer.start_time and offer.end_time):
@@ -200,14 +210,18 @@ def validate_publish(offer):
             raise ValidationError("Начало услуги уже прошло.")
         authorize_sender(offer.sender_id, offer.organization_id)
         return
-    if not offer.organization_id or not offer.date or not offer.start_time or not offer.end_time:
+    from .parts import values
+    parts = values(offer)
+    if not offer.date or not 1 <= len(parts) <= 2:
         raise ValidationError("Нужны организация, дата, начало и окончание.")
-    if not offer.organization.is_active or offer.start_time >= offer.end_time:
-        raise ValidationError("Проверьте организацию и интервал смены.")
-    start = timezone.make_aware(datetime.combine(offer.date, offer.start_time))
-    if start <= timezone.now():
-        raise ValidationError("Нельзя публиковать предложение на прошедшее время. Исправьте дату или начало.")
-    authorize_sender(offer.sender_id, offer.organization_id)
+    for part in parts:
+        if not part["start_time"] or not part["end_time"] or part["start_time"] >= part["end_time"]:
+            raise ValidationError("Укажите начало и окончание каждой студии.")
+        if not Organization.objects.filter(pk=part["organization"], is_active=True).exists():
+            raise ValidationError("Студия отключена.")
+        if timezone.make_aware(datetime.combine(offer.date, part["start_time"])) <= timezone.now():
+            raise ValidationError("Нельзя публиковать предложение на прошедшее время. Исправьте дату или начало.")
+        authorize_sender(offer.sender_id, part["organization"])
 
 
 @transaction.atomic
@@ -314,6 +328,9 @@ def recompute(offer):
     if valid:
         offer.start_time = parse_time(min(item["start"] for item in valid))
         offer.end_time = parse_time(max(item["end"] for item in valid))
+    if offer.pk and offer.parts.exists():
+        from .parts import sync
+        sync(offer)
 
 
 @transaction.atomic
@@ -332,7 +349,8 @@ def answer(offer_id, answers, *, user_id=None, version=None):
     if not isinstance(answers, dict):
         raise ValidationError("Нужен объект ответов.")
     before = snapshot(offer)
-    known = {q["key"] for q in offer.questions} | {"date", "organization", "start_time", "end_time", "comment", "intervals"}
+    known = {q["key"] for q in offer.questions} | {"date", "organization", "start_time", "end_time", "comment", "intervals", "parts"}
+    resolved = set(answers)
     for key, value in answers.items():
         if key not in known:
             raise ValidationError("Неизвестное поле уточнения.")
@@ -347,13 +365,65 @@ def answer(offer_id, answers, *, user_id=None, version=None):
                 except ValueError:
                     raise ValidationError("Укажите полную дату: ДД.ММ.ГГГГ.")
         elif key == "organization":
+            if offer.parts.count() > 1:
+                raise ValidationError("Исправьте организацию в соответствующей части предложения.")
             try:
                 org = Organization.objects.get(pk=int(value), is_active=True)
             except (ValueError, TypeError, Organization.DoesNotExist):
                 raise ValidationError("Выберите действующую организацию.")
             authorize_sender(offer.sender_id, org.pk)
             offer.organization = org
+            offer.parts.all().delete()
+            for item in offer.intervals:
+                item["organization"] = org.pk
+            for item in offer.evidence.get("images", []):
+                item["organization"] = org.pk
+        elif key == "parts":
+            from .parts import replace
+            if any(q["key"] == "split" for q in offer.questions):
+                raise ValidationError("Сначала разделите альбом.")
+            if any(q["type"] == "organization" for q in offer.questions):
+                raise ValidationError("Сначала определите студию каждого снимка.")
+            if any(q["type"] in ("time", "intervals") for q in offer.questions):
+                if not isinstance(value, list) or any(not p.get("intervals") or
+                    any(not i.get("start") or not i.get("end") for i in p["intervals"]) for p in value):
+                    raise ValidationError("Уточните все записи каждой студии; одного общего диапазона недостаточно.")
+                if {int(p["organization"]) for p in value} != set(offer.parts.values_list("organization_id", flat=True)):
+                    raise ValidationError("Сохраните обе студии при уточнении записей.")
+            replace(offer, value)
+            resolved.update(q["key"] for q in offer.questions if q["type"] in ("time", "intervals", "organization"))
+        elif key.startswith("image:"):
+            _, index, field = key.split(":")
+            index = int(index)
+            images = offer.evidence.get("images", [])
+            if not 0 <= index < len(images):
+                raise ValidationError("Не найден снимок уточнения.")
+            if field == "organization":
+                org = Organization.objects.get(pk=int(value), is_active=True)
+                authorize_sender(offer.sender_id, org.pk)
+                images[index]["organization"] = org.pk
+                for item in offer.intervals:
+                    if item.get("image_index") == index:
+                        item["organization"] = org.pk
+            elif field == "intervals":
+                if not isinstance(value, list) or not 1 <= len(value) <= 100:
+                    raise ValidationError("Укажите список интервалов этого снимка.")
+                # Keep stable indices for the remaining questions by resolving removed indices.
+                removed = {n for n, i in enumerate(offer.intervals) if i.get("image_index") == index}
+                offer.questions = [q for q in offer.questions if not (q["key"].startswith("interval:")
+                                and int(q["key"].split(":")[1]) in removed)]
+                remaining = [i for n, i in enumerate(offer.intervals) if n not in removed]
+                remap = {old: new for new, old in enumerate(n for n in range(len(offer.intervals)) if n not in removed)}
+                for q in offer.questions:
+                    if q["key"].startswith("interval:") and q["key"] not in resolved:
+                        _, old, suffix = q["key"].split(":")
+                        q["key"] = f"interval:{remap[int(old)]}:{suffix}"
+                offer.intervals = remaining + [{"room": str(i.get("room", ""))[:120],
+                    "start": parse_time(i["start"]).strftime("%H:%M"), "end": parse_time(i["end"]).strftime("%H:%M"),
+                    "organization": images[index].get("organization"), "image_index": index, "human_verified": True} for i in value]
         elif key in ("start_time", "end_time"):
+            if offer.parts.count() > 1:
+                raise ValidationError("Уточните время соответствующей студии или записи.")
             setattr(offer, key, parse_time(value))
         elif key == "comment":
             offer.comment = str(value)[:4000]
@@ -364,16 +434,27 @@ def answer(offer_id, answers, *, user_id=None, version=None):
             offer.intervals[int(index)][field] = parse_time(value).strftime("%H:%M")
             offer.intervals[int(index)]["human_verified"] = True
         elif key == "intervals":
+            if offer.parts.count() > 1:
+                raise ValidationError("Укажите интервалы для каждой студии отдельно.")
             if not isinstance(value, list) or not 1 <= len(value) <= 100:
                 raise ValidationError("Укажите список интервалов записей.")
             offer.intervals = [{"start": parse_time(item["start"]).strftime("%H:%M"),
                 "end": parse_time(item["end"]).strftime("%H:%M"), "room": str(item.get("room", ""))[:120],
-                "human_verified": True} for item in value]
-    if any(k.startswith("interval:") or k == "intervals" for k in answers):
+                "organization": offer.organization_id, "human_verified": True} for item in value]
+    if any(k.startswith(("interval:", "image:")) or k == "intervals" for k in answers):
         if any(i.get("start") and i.get("end") and i["start"] >= i["end"] for i in offer.intervals):
             raise ValidationError("Окончание каждой записи должно быть позже начала в этот день.")
-        recompute(offer)
-    offer.questions = [q for q in offer.questions if q["key"] not in answers
+    if "parts" not in answers:
+        from .parts import from_intervals
+        if any(k in answers for k in ("start_time", "end_time")):
+            offer.parts.all().delete()
+            offer.intervals = []
+            from .parts import replace
+            replace(offer, [{"organization": offer.organization_id, "start_time": str(offer.start_time), "end_time": str(offer.end_time)}])
+        from_intervals(offer)
+        if not offer.parts.exists():
+            recompute(offer)
+    offer.questions = [q for q in offer.questions if q["key"] not in resolved
         and not ("intervals" in answers and q["key"].startswith("interval:"))]
     offer.state, offer.error = ("needs_input" if offer.questions else "review"), ""
     changed(offer, "clarified", f"telegram:{user_id}" if user_id else "web", before)
@@ -393,9 +474,11 @@ def edit_published(offer_id, payload, version=None):
     if offer.state not in ("open", "claimed"):
         raise ValidationError("Редактирование доступно для открытой или занятой смены.")
     # Significant changes invalidate the assignment, rather than silently changing an employee's commitment.
-    if offer.state == "claimed" and any(k in payload for k in ("date", "start_time", "end_time", "organization")):
+    if offer.state == "claimed" and any(k in payload for k in ("date", "start_time", "end_time", "organization", "parts")):
         raise ValidationError("Сначала снимите сотрудника, затем измените дату, организацию или время.")
     before = snapshot(offer)
+    if offer.parts.count() > 1 and any(k in payload for k in ("start_time", "end_time", "organization")):
+        raise ValidationError("Исправьте интервал нужной студии отдельно.")
     for key in ("start_time", "end_time"):
         if key in payload:
             setattr(offer, key, parse_time(payload[key]))
@@ -405,9 +488,35 @@ def edit_published(offer_id, payload, version=None):
         offer.organization = Organization.objects.get(pk=int(payload["organization"]), is_active=True)
     if "comment" in payload:
         offer.comment = str(payload["comment"])[:4000]
-    if any(k in payload for k in ("date", "start_time", "end_time", "organization")):
+    if "parts" in payload:
+        from .parts import replace, values
+        parts = values(offer)
+        if not isinstance(payload["parts"], list) or not payload["parts"]:
+            raise ValidationError("Укажите изменяемые части предложения.")
+        for patch in payload["parts"]:
+            old = next((p for p in parts if p.get("id") == patch.get("id") and patch.get("id") or p["organization"] == int(patch["organization"])), None)
+            if old:
+                old.update(patch)
+                if any(k in patch for k in ("start_time", "end_time")) and "intervals" not in patch:
+                    old["intervals"] = []
+            else:
+                parts.append(patch)
+        replace(offer, parts)
+    elif any(k in payload for k in ("start_time", "end_time", "organization")):
+        from .parts import replace
+        old = offer.parts.first()
+        original_org = old.organization_id if old else offer.organization_id
+        replace(offer, [{"organization": offer.organization_id, "start_time": str(offer.start_time),
+                        "end_time": str(offer.end_time), "intervals": []}])
+        offer.images.filter(part__organization_id=original_org).update(part=offer.parts.first())
+    if any(k in payload for k in ("date", "start_time", "end_time", "organization", "parts")):
         validate_publish(offer)
+        config = publication_config(require_enabled=False)
+        offer.topic_chat_id, offer.topic_thread_id = config.chat_id, config.thread_id
+        offer.delivery_generation += 1
     changed(offer, "edited", "web", before)
+    if any(k in payload for k in ("date", "start_time", "end_time", "organization", "parts")):
+        enqueue_active(offer)
     return offer
 
 
@@ -428,7 +537,7 @@ def split_offer(offer_id, groups, version=None):
     for index, group in enumerate(groups):
         child = ShiftOffer.objects.create(source_key=f"split:{offer.pk}:{index}", sender_id=offer.sender_id,
             sender_name=offer.sender_name, comment=offer.comment, state="processing")
-        offer.images.filter(pk__in=group).update(offer=child)
+        offer.images.filter(pk__in=group).update(offer=child, part=None)
         changed(child, "split_created", "web", {"parent": offer.pk})
         RecognitionJob.objects.create(offer=child, revision=child.version, available_at=timezone.now())
         children.append(child.pk)

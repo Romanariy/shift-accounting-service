@@ -14,6 +14,15 @@ def describe(offer):
     end = offer.end_time.strftime("%H:%M") if offer.end_time else "?"
     duration = f"{start}–{end}" if offer.start_time else "В течение дня"
     text = f"Предложение №{offer.pk} · {service.STATE_LABELS.get(offer.state, offer.state)}\n{org}\n{day} · {duration}"
+    if offer.kind == "shift":
+        from .parts import values
+        parts = values(offer)
+        if len(parts) > 1:
+            text = f"Предложение №{offer.pk} · {service.STATE_LABELS.get(offer.state, offer.state)}\n{day}"
+            for p in parts:
+                start = p["start_time"].strftime("%H:%M") if p["start_time"] else "?"
+                end = p["end_time"].strftime("%H:%M") if p["end_time"] else "?"
+                text += f'\n{p["organization_name"]}: {start}–{end}'
     if offer.kind == "service":
         text += "\nУслуга: " + offer.service_name
         if offer.units is not None:
@@ -25,6 +34,13 @@ def describe(offer):
     if offer.comment:
         text += "\n\n" + offer.comment[:1800]
     return text
+
+
+def booking_lines(offer, items, parts=None):
+    from .parts import values
+    names = {p["organization"]: p["organization_name"] for p in (values(offer) if parts is None else parts)}
+    return "\n".join((names.get(i.get("organization", offer.organization_id), "") + " · " if len(names) > 1 else "") +
+                     f'{i.get("room", "")} · {i.get("start") or "?"}–{i.get("end") or "?"}' for i in items)
 
 
 def render(delivery):
@@ -45,12 +61,10 @@ def render(delivery):
             rows = [[button(f'№{o["id"]} · {o["start_time"]:%H:%M}–{o["end_time"]:%H:%M}', "utarget", offer, str(o["id"]))] for o in value["candidates"][:80]]
         else:
             old = value["before"]
-            def lines(items):
-                return "\n".join(f'{i.get("room", "")} {i.get("start")}–{i.get("end")}' for i in items)[:900]
-            text += "\nПрежние записи:\n" + lines(old["intervals"]) + "\nНовый снимок:\n" + lines(offer.intervals)
+            text += "\nПрежние записи:\n" + booking_lines(offer, old["intervals"], old["parts"])[:900] + "\nНовый снимок:\n" + booking_lines(offer, offer.intervals)[:900]
             rows = [[button("Дополнить", "umode", offer, "merge"), button("Заменить", "umode", offer, "replace")]]
             if offer.update_mode:
-                text += "\nПосле подтверждения:\n" + lines(value["intervals"])
+                text += "\nПосле подтверждения:\n" + booking_lines(offer, value["intervals"], old["parts"])[:900]
                 target = offer.update_target
                 if delivery.recipient in (target.sender_id, service.coordinator_id()):
                     rows.append([button("Подтвердить обновление", "uapply", offer)])
@@ -68,7 +82,7 @@ def render(delivery):
             "start_time": "Укажите начало смены ЧЧ:ММ.", "end_time": "Укажите окончание смены ЧЧ:ММ.", "comment": "Введите комментарий. Чтобы убрать его, отправьте —."}
         label = question["label"] if question else labels.get(delivery.prompt_key, "Уточните данные на сайте.")
         text += "\n\n" + label
-        if delivery.prompt_key == "organization":
+        if delivery.prompt_key == "organization" or (question and question["type"] == "organization"):
             allowed = service.allowed_organizations(offer.sender_id)
             rows = [[button(org.name, "org", offer, str(org.pk))] for org in Organization.objects.filter(pk__in=allowed)]
         elif delivery.prompt_key == "split":
@@ -79,12 +93,15 @@ def render(delivery):
     elif delivery.purpose == "edit_menu" and editable:
         rows = [[button(label, "field", offer, field)] for field, label in
                 (("date", "Дата"), ("organization", "Организация"), ("start_time", "Начало"), ("end_time", "Окончание"), ("comment", "Комментарий"))]
+        if offer.parts.count() > 1:
+            rows = [[button("Дата", "field", offer, "date")], [button("Комментарий", "field", offer, "comment")]]
+            text += "\nИнтервалы студий можно исправить в карточке предложения на сайте."
     elif delivery.purpose == "review" and editable:
         if offer.state == "failed":
             text += "\n\n" + offer.error + " Откройте заявку на сайте."
         elif not offer.questions:
             if offer.kind == "shift":
-                text += "\n\nЗаписи:\n" + "\n".join(f'{i.get("room", "")} · {i.get("start") or "?"}–{i.get("end") or "?"}' for i in offer.intervals)[:1000]
+                text += "\n\nЗаписи:\n" + booking_lines(offer, offer.intervals)[:1000]
             text += "\n\nПроверьте все записи по изображениям. Фактическую работу нужно будет внести в журнал отдельно."
             rows = [[button("Опубликовать", "publish", offer)], [button("Изменить", "edit", offer), button("Отменить", "cancel", offer)]]
     if offer.state == "duplicate":

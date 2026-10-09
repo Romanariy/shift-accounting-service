@@ -65,8 +65,20 @@ class ShiftOffer(models.Model):
     published_at = models.DateTimeField(null=True)
 
 
+class OfferPart(models.Model):
+    offer = models.ForeignKey(ShiftOffer, on_delete=models.CASCADE, related_name="parts")
+    organization = models.ForeignKey("shifts.Organization", on_delete=models.PROTECT)
+    start_time = models.TimeField(null=True)
+    end_time = models.TimeField(null=True)
+    intervals = models.JSONField(default=list)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=("offer", "organization"), name="offer_part_organization")]
+
+
 class OfferImage(models.Model):
     offer = models.ForeignKey(ShiftOffer, on_delete=models.CASCADE, related_name="images")
+    part = models.ForeignKey(OfferPart, null=True, on_delete=models.SET_NULL, related_name="images")
     path = models.CharField(max_length=200)
     sha256 = models.CharField(max_length=64, db_index=True)
     message_id = models.BigIntegerField()
