@@ -299,7 +299,7 @@ def delete_batch(batch_id):
         raise ValidationError("Счёт сейчас отправляется. Дождитесь результата доставки и повторите удаление.")
     ids = list(batch.invoices.values_list("id", flat=True))
     for invoice in batch.invoices.all():
-        queue_keyboard_removal(invoice)
+        queue_keyboard_removal(invoice, requeue=True)
         # Keep surviving versions in one chain when a middle version is removed.
         Invoice.objects.filter(replaces=invoice).update(replaces_id=invoice.replaces_id)
     Delivery.objects.filter(batch=batch).delete()
@@ -319,7 +319,7 @@ def delete_invoice(invoice_id):
         delete_batch(batch.pk)
         return
     oid = invoice.organization_id
-    queue_keyboard_removal(invoice)
+    queue_keyboard_removal(invoice, requeue=True)
     Invoice.objects.filter(replaces=invoice).update(replaces_id=invoice.replaces_id)
     Delivery.objects.filter(invoice=invoice).delete()
     log_change("invoice", invoice.pk, "delete", actor="web", after={"batch_id": batch.pk, "organization_id": oid})

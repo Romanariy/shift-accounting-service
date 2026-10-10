@@ -86,7 +86,9 @@ async def process_message(message, edited=False):
 async def process_ledger_callback(query, bot):
     await query.answer()
     try:
-        _, action, entity_id, version = query.data.split(":")
+        _, action, entity_id, version, *revision = query.data.split(":")
+        if len(revision) > 1 or (revision and action != "paid"):
+            raise ValueError("Некорректная кнопка")
         if action == "approve":
             result = await sync_to_async(approve)(int(entity_id), int(version), actor=f"telegram:{query.from_user.id}", telegram_user=query.from_user.id)
             text = "Пакет подтверждён. Счета поставлены в очередь отправки." if result["approved"] else result["message"]
@@ -97,7 +99,8 @@ async def process_ledger_callback(query, bot):
             if not query.message:
                 raise ValidationError("Откройте личное сообщение со счётом для подтверждения оплаты.")
             result = await sync_to_async(mark_paid)(int(entity_id), query.from_user.id, version=int(version),
-                message_id=query.message.message_id, chat_id=query.message.chat.id)
+                message_id=query.message.message_id, chat_id=query.message.chat.id,
+                payment_revision=int(revision[0]) if revision else None)
             text = "Оплата этого счёта уже подтверждена." if result["already_paid"] else "Оплата подтверждена. Счёт закрыт для всех получателей организации."
         else:
             return

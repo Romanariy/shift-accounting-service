@@ -1,10 +1,12 @@
 import json
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from io import BytesIO
+from unittest.mock import patch
 
 from django.core.exceptions import ValidationError
 from django.test import TestCase, override_settings
+from django.utils import timezone
 from openpyxl import load_workbook
 
 from apps.shifts.models import Employee, Organization, AuditLog
@@ -201,7 +203,10 @@ class OverlapAndReceiptTests(TestCase):
         self.assertEqual(self.post("receipts",payload).status_code,400)
         r=self.post("receipts",{**payload,"amount":"100"}).json()
         url=f'/api/shifts/ledger/receipts/{r["id"]}/'
-        self.assertEqual(self.client.put(url,json.dumps({**r,"amount":"200"}),content_type="application/json").status_code,200)
+        # Windows clocks may return the same timestamp for consecutive requests.
+        # Model a later edit explicitly instead of relying on elapsed wall time.
+        with patch("django.utils.timezone.now", return_value=timezone.now()+timedelta(seconds=1)):
+            self.assertEqual(self.client.put(url,json.dumps({**r,"amount":"200"}),content_type="application/json").status_code,200)
         self.assertEqual(self.client.put(url,json.dumps(r),content_type="application/json").status_code,400)
 
     def test_required_comment_hint_and_telegram_edit_keeps_bonus(self):

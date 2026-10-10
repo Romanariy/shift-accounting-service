@@ -2,6 +2,7 @@
 import { dateLabel } from "./date-format";
 import type { Item } from "./accounting-types";
 import { PaymentStatus, type PaymentsData } from "./Payments";
+import {InvoicePaymentActions} from "./InvoicePaymentActions";
 
 export type InvoiceFilters = {organization:string;start:string;end:string;state:string;payment_state:string};
 export const emptyInvoiceFilters:InvoiceFilters = {organization:"",start:"",end:"",state:"all",payment_state:"all"};
@@ -16,9 +17,10 @@ function DeliveryState({invoice}:{invoice:Item}) {
   return <>{Object.entries(counts).map(([state,count])=><small key={state} className={["failed","unknown"].includes(state)?"inline-error":""}>{labels[state]||state}: {count}</small>)}</>;
 }
 
-export default function InvoicesList({data,filters,onFilters,organizations,offset,onOffset,pageSize,loading,error,onOpen,contacts}: {
+export default function InvoicesList({data,filters,onFilters,organizations,offset,onOffset,pageSize,loading,error,onOpen,contacts,busy=false,onPayment}: {
   data:PaymentsData;filters:InvoiceFilters;onFilters:(value:InvoiceFilters)=>void;organizations:Item[];
   offset:number;onOffset:(offset:number)=>void;pageSize:number;loading:boolean;error:string;onOpen:(invoice:Item)=>void;contacts:Item[];
+  busy?:boolean;onPayment?:(invoice:Item,cancel:boolean)=>void;
 }) {
   return <section className="panel invoices-panel">
     <div className="panel-heading"><div><h2>Счета организаций</h2><small>Подготовка, отправка и оплата в одном списке</small></div>
@@ -37,7 +39,7 @@ export default function InvoicesList({data,filters,onFilters,organizations,offse
       <td>{day(invoice.start)} — {day(invoice.end)}</td><td className="amount right">{rub(invoice.total)}</td>
       <td><span className={`pill ${invoice.batch_state==="draft"?"warning":""}`}>{invoice.batch_state==="draft"?"На проверке":"Подтверждён"}</span>{invoice.errors?.length>0&&<small className="inline-error">Требует исправления</small>}</td>
       <td><DeliveryState invoice={invoice}/></td><td><PaymentStatus invoice={invoice} contacts={contacts}/></td>
-      <td><button className="text-button" onClick={()=>onOpen(invoice)}>Открыть счёт</button><small><a href={`/api/shifts/ledger/invoices/${invoice.id}/file/`}>Скачать Excel</a></small></td>
+      <td><button className="text-button" onClick={()=>onOpen(invoice)}>Открыть счёт</button>{onPayment&&<InvoicePaymentActions invoice={invoice} busy={busy} onAction={onPayment}/>}<small><a href={`/api/shifts/ledger/invoices/${invoice.id}/file/`}>Скачать Excel</a></small></td>
     </tr>)}</tbody></table></div>:<p className="empty">{filters.payment_state==="open"?"Нет счетов, ожидающих оплаты.":"Нет счетов с такими условиями. Измените фильтры или подготовьте новый пакет."}</p>}
     <div className="pagination"><button className="button secondary compact" disabled={!offset||loading} onClick={()=>onOffset(Math.max(0,offset-pageSize))}>← Назад</button><span>{data.count?offset+1:0}–{Math.min(offset+pageSize,data.count)} из {data.count}</span><button className="button secondary compact" disabled={offset+pageSize>=data.count||loading} onClick={()=>onOffset(offset+pageSize)}>Далее →</button></div>
   </section>;

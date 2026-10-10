@@ -171,7 +171,7 @@ class InvoicePaymentTests(TestCase):
             else:
                 button = markup.inline_keyboard[0][0]
                 self.assertEqual(button.text, "Оплатил")
-                self.assertEqual(button.callback_data, f"ledger:paid:{invoice.pk}:{invoice.version}")
+                self.assertEqual(button.callback_data, f"ledger:paid:{invoice.pk}:{invoice.version}:0")
         mark_paid(invoice.pk, self.first.user_id)
         self.assertTrue(async_to_sync(deliver_once)(bot))
         self.assertTrue(async_to_sync(deliver_once)(bot))

@@ -36,14 +36,15 @@ def claim():
 
 
 @transaction.atomic
-def finish(pk, state, error="", message_id=None):
+def finish(pk, state, error="", message_id=None, payment_revision=None):
     lock()
     changed = Delivery.objects.filter(pk=pk, state="sending").update(state=state, error=error[:2000], message_id=message_id, updated_at=timezone.now())
     if changed and state == "sent":
         item = Delivery.objects.select_related("invoice").get(pk=pk)
-        if item.purpose == "owner" and item.invoice.payment_state != "open":
+        if item.purpose == "owner" and (item.invoice.payment_state != "open" or
+                payment_revision is not None and payment_revision != item.invoice.payment_revision):
             # Payment can arrive from the first recipient while another document is in flight.
-            queue_keyboard_removal(item.invoice)
+            queue_keyboard_removal(item.invoice, requeue=payment_revision is not None and payment_revision != item.invoice.payment_revision)
 
 
 async def deliver_once(bot):
@@ -75,7 +76,8 @@ async def deliver_once(bot):
                 [InlineKeyboardButton(text="Подтвердить отправку", callback_data=f"ledger:approve:{item.batch_id}:{item.version}")],
                 [InlineKeyboardButton(text="Обновить отчёты", callback_data=f"ledger:refresh:{item.batch_id}:{item.version}")],
             ]))
-        await sync_to_async(finish)(item.pk, "sent", message_id=result.message_id)
+        await sync_to_async(finish)(item.pk, "sent", message_id=result.message_id,
+                                   payment_revision=item.invoice.payment_revision if item.purpose == "owner" else None)
     except TelegramRetryAfter as error:
         # Explicit rejection: Telegram did not accept the request.
         await sync_to_async(finish)(item.pk, "failed", f"Лимит Telegram. Повторите через {error.retry_after} секунд.")

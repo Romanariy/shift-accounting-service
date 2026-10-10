@@ -1,12 +1,13 @@
 """Invoice-level listing for preparation, delivery and shared payment tracking."""
 from datetime import date
 from django.core.exceptions import ValidationError
-from django.db.models import Count
+from django.db.models import Count, Exists, OuterRef
 from .models import Invoice, Delivery, TelegramContact
 
 
 def invoice_list(params):
-    rows = Invoice.objects.select_related("batch").defer("artifact", "lines", "adjustments")
+    rows = Invoice.objects.select_related("batch").defer("artifact", "lines", "adjustments").annotate(
+        replaced=Exists(Invoice.objects.filter(replaces_id=OuterRef("pk"), batch__state="approved")))
     open_count = rows.filter(batch__state="approved", payment_state="open").count()
     preparation = params.get("state", "all") or "all"
     payment = params.get("payment_state", "all") or "all"
@@ -34,6 +35,8 @@ def invoice_list(params):
         "version": i.version, "batch_version": i.batch.version, "batch_state": i.batch.state,
         "total": i.total, "replaces": i.replaces_id, "payment_state": i.payment_state,
         "paid_at": i.paid_at, "paid_by": i.paid_by, "paid_by_name": names.get(i.paid_by, ""),
+        "payment_revision": i.payment_revision,
+        "payment_action_allowed": i.batch.state == "approved" and i.payment_state in ("open", "paid") and not i.replaced,
         "delivery_counts": deliveries.get(i.pk, {}), "recipient_count": len(i.recipients),
         "errors": i.errors} for i in page],
         "count": count, "open_count": open_count, "offset": offset, "limit": limit}

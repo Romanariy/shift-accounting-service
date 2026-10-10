@@ -47,6 +47,7 @@ def serialized(obj):
         result["created_at"] = obj.created_at
     if isinstance(obj, Invoice):
         result["paid_at"] = obj.paid_at
+        result["payment_action_allowed"] = obj.batch.state == "approved" and obj.payment_state in ("open", "paid") and not Invoice.objects.filter(replaces=obj, batch__state="approved").exists()
     if isinstance(obj, Batch):
         result["invoices"] = [serialized(i) for i in obj.invoices.all()]
         result["deliveries"] = [serialized(d) for d in Delivery.objects.filter(batch=obj).order_by("id")]
@@ -218,6 +219,9 @@ def read(request, resource, pk, action):
 
 
 def mutate(request, resource, pk, action, payload):
+    if resource == "invoices" and pk and action in ("confirm-payment", "cancel-payment") and request.method == "POST":
+        from .payments import web_payment
+        return reply(web_payment(pk, payload, cancel=action == "cancel-payment"))
     if resource == "receipts":
         from .receipts import save
         if request.method == "POST" and not pk or request.method in ("PUT", "DELETE") and pk:

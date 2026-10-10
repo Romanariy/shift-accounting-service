@@ -11,8 +11,8 @@ const stateLabels:Record<string,string>={none:"Без подтверждения
 
 export function PaymentStatus({invoice,contacts=[]}: {invoice:Item;contacts?:Item[]}) {
   const state=invoice.payment_state||"none";
-  const by=invoice.paid_by_name||contacts.find(contact=>contact.user_id===invoice.paid_by)?.name||invoice.paid_by;
-  return <div className="payment-status"><span className={`pill ${state==="open"?"warning":["none","superseded"].includes(state)?"neutral":""}`}>{stateLabels[state]||state}</span>{state==="paid"&&<small>{paidDate(invoice.paid_at)} · {by||"Получатель"} · Екатеринбург</small>}{state==="open"&&<small>Закроется для всех получателей после нажатия «Оплатил» в Telegram.</small>}</div>;
+  const by=invoice.paid_by_name||(invoice.paid_by==null?"Администратор сайта":contacts.find(contact=>contact.user_id===invoice.paid_by)?.name||invoice.paid_by);
+  return <div className="payment-status"><span className={`pill ${state==="open"?"warning":["none","superseded"].includes(state)?"neutral":""}`}>{stateLabels[state]||state}</span>{state==="paid"&&<small>{paidDate(invoice.paid_at)} · {by||"Получатель"} · Екатеринбург</small>}{state==="open"&&<small>Подтверждение на сайте или в Telegram закроет счёт для всех получателей.</small>}</div>;
 }
 
 export default function Payments({data,state,offset,pageSize,loading,error,onState,onOffset,onOpen,contacts}: {data:PaymentsData;state:string;offset:number;pageSize:number;loading:boolean;error:string;onState:(value:string)=>void;onOffset:(value:number)=>void;onOpen:(invoice:Item)=>void;contacts:Item[]}) {

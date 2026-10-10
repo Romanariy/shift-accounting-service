@@ -572,6 +572,35 @@ test("offer service form follows catalog format and supports a free task", async
   assert.match(text(renderer.toJSON()),/27.09.2026 \(Вс\)/);
 });
 
+test("website payment updates counter and selected card while preserving invoice filters",async t=>{
+  let paid=false,revision=0;const writes=[];
+  const invoice=()=>({id:95,batch:19,organization:1,organization_name:"Фокус",start:"2026-04-01",end:"2026-04-30",version:1,total:"1200",payment_state:paid?"paid":"open",payment_revision:revision,payment_action_allowed:true,paid_by:null,paid_at:paid?"2026-10-10T13:00:00Z":null,recipients:[777],errors:[],lines:[],adjustments:[]});
+  const {renderer}=await mountApp(t,{}, {request(url,options){
+    if(options.method==="POST"&&/invoices\/95\/(confirm|cancel)-payment\//.test(url)){
+      writes.push(JSON.parse(options.body));paid=url.includes('confirm-payment');revision++;return {};
+    }
+    if(url.includes('payments/?')||url.includes('invoices/?')){
+      const state=new URL(url,'http://local').searchParams.get('payment_state');
+      const rows=state==='open'&&paid?[]:[invoice()];return {open_count:paid?0:1,count:rows.length,invoices:rows};
+    }
+    if(url.endsWith('batches/19/'))return {id:19,start:'2026-04-01',end:'2026-04-30',state:'approved',invoices:[invoice()],deliveries:[]};
+  }});
+  const root=renderer.root;
+  await act(async()=>root.findByProps({'aria-label':'Показать неоплаченные счета: 1'}).props.onClick());
+  await act(async()=>button(root,'Открыть счёт').props.onClick());
+  await act(async()=>button(root,'Подтвердить оплату').props.onClick());
+  await act(async()=>root.findByType('form').props.onSubmit({preventDefault(){}}));
+  assert.equal(root.findByProps({'aria-label':'Статус оплаты'}).props.value,'open');
+  assert.equal(root.findByProps({'aria-label':'Показать неоплаченные счета: 0'}).children[0],'0');
+  assert.match(text(renderer.toJSON()),/Пакет №19/);assert.match(text(renderer.toJSON()),/Администратор сайта/);
+  await act(async()=>button(root,'Отменить подтверждение').props.onClick());
+  await act(async()=>root.findByType('textarea').props.onChange({target:{value:'Ошибка сверки'}}));
+  await act(async()=>root.findByType('form').props.onSubmit({preventDefault(){}}));
+  assert.equal(root.findByProps({'aria-label':'Показать неоплаченные счета: 1'}).children[0],'1');
+  assert.deepEqual(writes,[{version:1,payment_revision:0},{version:1,payment_revision:1,reason:'Ошибка сверки'}]);
+  assert.equal(root.findAllByType('dialog').length,0);assert.match(text(renderer.toJSON()),/Пакет №19/);
+});
+
 test("offer form creates an idempotency key without secure-context randomUUID",()=>{
   const {newOfferRequestKey}=require("../src/components/OfferServiceForm");
   const first=newOfferRequestKey({});
