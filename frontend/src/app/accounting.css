@@ -30,3 +30,8 @@
 .invoice-detail > .text-button { margin-bottom: 14px; }
 .selected-invoice { border-left: 3px solid #26776d; padding-left: 16px; }
 .invoices-panel td small { display: block; }
+.accounting .calculation-details { min-width: 220px; max-width: 360px; white-space: normal; overflow-wrap: anywhere; text-align: left; line-height: 1.55; }
+.client-bonuses-panel .bonus-client-choices { grid-column: 1 / -1; border: 1px solid var(--line); border-radius: 8px; padding: 16px; display: grid; gap: 10px; }
+.client-bonuses-panel .bonus-client-choices legend { padding: 0 6px; }
+.client-bonuses-panel .bonus-client-choices label { flex-direction: row; align-items: center; flex-wrap: wrap; gap: 8px; }
+.client-bonuses-panel .bonus-client-choices label small { margin-left: 24px; flex-basis: 100%; }

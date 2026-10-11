@@ -112,6 +112,9 @@ def api(request, resource, pk=None, action=None):
 
 
 def read(request, resource, pk, action):
+    if resource in ("bonus-clients", "bonus-rules", "client-bookings"):
+        from .client_bonuses import listing
+        return reply(listing(resource, request.GET, pk))
     if resource == "receipts":
         from .receipts import listing
         return reply(listing(request.GET))
@@ -172,7 +175,7 @@ def read(request, resource, pk, action):
         limit = min(250, max(1, int(request.GET.get("limit", 50))))
         return reply({"records": [serialized(r) for r in rows[offset:offset + limit]], "count": rows.count(), "limit": limit, "offset": offset,
                       "total": rows.aggregate(total=Sum("amount"))["total"] or "0",
-                      "review": rows.filter(Q(review=True) | Q(calculation_review=True) | ~Q(error="")).count(), "employee_totals": employee_totals})
+                      "review": rows.filter(Q(review=True) | Q(calculation_review=True) | Q(client_bonus_review=True) | ~Q(error="")).count(), "employee_totals": employee_totals})
     if resource == "batches":
         if pk:
             return reply(serialized(Batch.objects.get(pk=pk)))
@@ -206,6 +209,9 @@ def read(request, resource, pk, action):
             entity_id = int(request.GET["entity_id"])
             entity_type = request.GET.get("entity_type", "record")
             condition = Q(entity_type=entity_type, entity_id=entity_id)
+            if entity_type == "client_booking":
+                from .models import ClientBonusCharge
+                condition |= Q(entity_type="client_charge", entity_id__in=ClientBonusCharge.objects.filter(booking_id=entity_id).values_list("id", flat=True))
             if entity_type == "record":
                 record = Record.objects.filter(pk=entity_id).first()
                 if record and record.legacy_id:
@@ -219,6 +225,15 @@ def read(request, resource, pk, action):
 
 
 def mutate(request, resource, pk, action, payload):
+    if resource == "bonus-recalculate" and request.method == "POST":
+        from .client_bonuses import recalculate as bonus_recalculate
+        return reply(bonus_recalculate(payload))
+    if resource in ("bonus-clients", "bonus-rules", "client-bookings"):
+        from .client_bonuses import save_client, save_rule, save_booking
+        if request.method not in ("POST", "PUT") or action and resource != "client-bookings":
+            return reply({"error": "Метод не поддерживается."}, 405)
+        handler = {"bonus-clients": save_client, "bonus-rules": save_rule, "client-bookings": save_booking}[resource]
+        return reply(handler(payload, pk, action) if resource == "client-bookings" else handler(payload, pk))
     if resource == "invoices" and pk and action in ("confirm-payment", "cancel-payment") and request.method == "POST":
         from .payments import web_payment
         return reply(web_payment(pk, payload, cancel=action == "cancel-payment"))

@@ -32,11 +32,12 @@ def members(keys):
 
 def source_token():
     from .engine import digest
+    from .client_bonuses import source_token as bonus_token
     # Rates and peer changes must invalidate a preview even when amounts match.
     return digest({"rows": list(Record.objects.order_by("id").values()),
                    "services": list(Service.objects.order_by("id").values()),
                    "rates": list(Rate.objects.order_by("id").values()),
-                   "decisions": list(OverlapDecision.objects.order_by("id").values())})
+                   "decisions": list(OverlapDecision.objects.order_by("id").values()), "client_bonuses": bonus_token()})
 
 
 def interval(row):
@@ -102,7 +103,7 @@ def plan(rows):
         row.actual_hours = actual
         row.payable_hours = row.actual_hours
         row.overlap_hours = Decimal(0)
-        row.amount = money(row.base_amount + row.bonus)
+        row.amount = money(row.base_amount + row.bonus + row.client_bonus)
         if eligible(row):
             if not interval(row):
                 row.calculation_note = "Для проверки пересечения укажите начало и конец смены."
@@ -178,7 +179,7 @@ def plan(rows):
                 elif row.organization_id in half and rate.calculation == "hourly":
                     row.payable_hours = row.actual_hours - row.overlap_hours / 2
                     row.overlap_factor = Decimal(".50")  # Applies to intersecting hours only in v2.
-                    row.amount = money(calculate(row, units=row.payable_hours) + row.bonus)
+                    row.amount = money(calculate(row, units=row.payable_hours) + row.bonus + row.client_bonus)
                     fmt = lambda v: format(v.quantize(Decimal('.000001')), 'f').rstrip('0').rstrip('.')
                     row.calculation_note = (f"{fmt(row.actual_hours)} ч − {fmt(row.overlap_hours)} ч × ½ = "
                                             f"{fmt(row.payable_hours)} оплачиваемых ч; минимум и максимум после расчёта часов.")

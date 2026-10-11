@@ -39,7 +39,7 @@ def filter_records(rows, params):
             raise ValidationError("Неизвестный вид записи.")
         rows = rows.filter(kind=kind)
     status = params.get("status")
-    needs_review = Q(review=True) | Q(calculation_review=True) | ~Q(error="")
+    needs_review = Q(review=True) | Q(calculation_review=True) | Q(client_bonus_review=True) | ~Q(error="")
     if status == "review":
         rows = rows.filter(needs_review)
     elif status == "ready":

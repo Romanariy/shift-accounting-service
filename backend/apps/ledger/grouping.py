@@ -94,6 +94,10 @@ def commit_records(rows, *, deleted=(), actor="web", allow_frozen=False):
     if django_settings.SHARED_SHIFT_ALLOCATION_ENABLED:
         cross_keys = set()  # Explicit legacy mode retains its former calculation contract.
     cross_peers = list(overlaps.members(cross_keys))
+    from . import client_bonuses
+    bonus_keys = {(source.organization_id, source.date) for r in rows if financial_change(old.get(r.pk), r)
+                  for source in (r, old.get(r.pk)) if source is not None and source.organization_id and overlaps.eligible(source)}
+    bonus_peers = list(client_bonuses.day_rows(bonus_keys))
     changed_keys = {k for r in rows for k in (key(old.get(r.pk)) if r.pk else None, key(r)) if k and financial_change(old.get(r.pk), r)}
     all_keys = {key(r) for r in rows if key(r)} | {key(r) for r in old.values() if key(r)}
     # Fixed/quantity services remain independent; only hourly groups share the freeze boundary.
@@ -126,12 +130,15 @@ def commit_records(rows, *, deleted=(), actor="web", allow_frozen=False):
     # Capture every participant before writing, including ones whose shares will change indirectly.
     affected = dict(old)
     affected.update({r.pk: r for r in cross_peers})
+    affected.update({r.pk: r for r in bonus_peers})
     for k in hourly_keys & changed_keys:
         affected.update({r.pk: r for r in matching(k)})
     before = {pk: record_dict(r, include_group=False) for pk, r in affected.items()}
     for row in rows:
         previous = old.get(row.pk)
         changed = financial_change(previous, row)
+        if not overlaps.eligible(row):
+            row.client_bonus, row.client_bonus_details, row.client_bonus_review = Decimal(0), [], False
         if previous and previous.legacy_id and (previous.kind != row.kind or previous.service_id != row.service_id):
             previous.deleted_at = timezone.now()
             sync_legacy(previous)
@@ -191,6 +198,12 @@ def commit_records(rows, *, deleted=(), actor="web", allow_frozen=False):
         if not row.deleted_at and overlaps.eligible(row) and not row.employee_id and financial_change(old.get(row.pk), row):
             overlaps.plan([row])
             row.save()
+    for peer in client_bonuses.reconcile(bonus_keys):
+        prior = before.get(peer.pk)
+        if prior and any(prior[field] != json_safe(getattr(peer, field)) for field in ("client_bonus", "client_bonus_review", "client_bonus_details")):
+            guard_frozen(set(), [peer], allow_frozen)
+        peer.save()
+        affected[peer.pk] = peer
     changed_ids = {r.pk for r in rows} | set(affected)
     updates = []
     for final in Record.objects.filter(pk__in=changed_ids).order_by("id"):

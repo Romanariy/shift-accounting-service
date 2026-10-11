@@ -93,6 +93,7 @@ class OfferImage(models.Model):
 
 
 class RecognitionJob(models.Model):
+    booking_import = models.ForeignKey("ledger.ClientBookingImport", null=True, blank=True, on_delete=models.CASCADE)
     offer = models.ForeignKey(ShiftOffer, null=True, on_delete=models.CASCADE, related_name="jobs")
     profile = models.ForeignKey(RecognitionProfile, null=True, on_delete=models.CASCADE)
     revision = models.PositiveIntegerField(default=1)
@@ -106,8 +107,9 @@ class RecognitionJob(models.Model):
 
     class Meta:
         constraints = [
-            models.CheckConstraint(condition=(Q(offer__isnull=False, profile__isnull=True) |
-                                              Q(offer__isnull=True, profile__isnull=False)), name="recognition_one_target"),
+            models.CheckConstraint(condition=(Q(offer__isnull=False, profile__isnull=True, booking_import__isnull=True) |
+                                              Q(offer__isnull=True, profile__isnull=False, booking_import__isnull=True) |
+                                              Q(offer__isnull=True, profile__isnull=True, booking_import__isnull=False)), name="recognition_one_target"),
         ]
 
 

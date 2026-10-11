@@ -31,7 +31,7 @@ def report_data(month, now=None):
     if start > now.date():
         raise ValidationError("Будущий месяц недоступен.")
     end = min(start.replace(day=monthrange(start.year, start.month)[1]), now.date())
-    employees, review, unassigned = {}, [], []
+    employees, review, unassigned, client_bonuses = {}, [], [], []
     rows = Record.objects.filter(date__range=(start, end), deleted_at=None, kind__in=("service", "oneoff")).select_related("employee", "organization").order_by("date", "id")
     for r in rows:
         reasons = []
@@ -43,6 +43,8 @@ def report_data(month, now=None):
             reasons.append(r.error)
         if r.calculation_review:
             reasons.append(r.calculation_note)
+        if r.client_bonus_review:
+            reasons.append("Требуется выбор или проверка клиентской доплаты")
         if reasons:
             item = {"id": r.pk, "date": r.date.isoformat(), "organization_name": r.organization.name if r.organization_id else "Без организации",
                     "employee_name": r.employee_name or (r.employee.display_name if r.employee_id else "Без сотрудника"),
@@ -51,12 +53,15 @@ def report_data(month, now=None):
         else:
             item = employees.setdefault(r.employee_id, {"employee_id": r.employee_id, "employee_name": r.employee.display_name, "amount": Decimal(0)})
             item["amount"] += r.amount
+            for detail in r.client_bonus_details:
+                client_bonuses.append({**detail, "record": r.pk, "organization": r.organization.name,
+                                       "employee": r.employee.display_name})
     earnings = sorted(employees.values(), key=lambda r: (r["employee_name"].casefold(), r["employee_id"]))
     total = sum((r["amount"] for r in earnings), Decimal(0))
     for r in earnings:
         r["amount"] = f'{r["amount"]:.2f}'
     return {"month": month, "start": start.isoformat(), "end": end.isoformat(), "generated_at": now.isoformat(),
-            "employees": earnings, "total": f"{total:.2f}", "review": review, "unassigned": unassigned,
+            "employees": earnings, "total": f"{total:.2f}", "review": review, "unassigned": unassigned, "client_bonuses": client_bonuses,
             "review_total": f'{sum((Decimal(r["amount"]) for r in review), Decimal(0)):.2f}',
             "unassigned_total": f'{sum((Decimal(r["amount"]) for r in unassigned), Decimal(0)):.2f}'}
 
@@ -69,7 +74,8 @@ def workbook_bytes(data):
     main = wb.active
     main.title = "Заработок"
     review = wb.create_sheet("На проверку")
-    for ws in (main, review):
+    bonuses = wb.create_sheet("Клиентские доплаты") if data.get("client_bonuses") else None
+    for ws in (main, review, *([bonuses] if bonuses else [])):
         ws.append(["Главный отчёт · все организации"])
         ws.append(["Период", f'{date_label(data["start"])} — {date_label(data["end"])}'])
         ws.append(["Сформирован (Екатеринбург)", date_time_label(data["generated_at"])])
@@ -82,11 +88,16 @@ def workbook_bytes(data):
     main.append(["На проверку (не включено)", Decimal(data["review_total"])])
     main.append(["Начисления без сотрудника (не включено)", Decimal(data["unassigned_total"])])
     review.append(["Дата", "Организация", "Исполнитель", "Сумма, ₽", "Причина", "Категория"])
+    if bonuses:
+        bonuses.append(["Дата", "Студия", "Сотрудник", "Клиент", "Правило", "Интервал", "Доплата, ₽"])
+    for d in data.get("client_bonuses", []):
+        bonuses.append([date.fromisoformat(d["date"]), safe_text(d["organization"]), safe_text(d["employee"]),
+                        safe_text(d["client"]), safe_text(d["rule"]), f'{d["start"]}–{d["end"]}', Decimal(d["amount"])])
     for key, label in (("review", "На проверку"), ("unassigned", "Начисления без сотрудника")):
         for r in data[key]:
             review.append([date.fromisoformat(r["date"]), safe_text(r["organization_name"]), safe_text(r["employee_name"]), Decimal(r["amount"]), safe_text(r["reason"]), label])
         review.append([label + " — итого", None, None, Decimal(data[key + "_total"])])
-    for ws, widths in ((main, [48, 48]), (review, [22, 30, 30, 20, 55, 36])):
+    for ws, widths in ((main, [48, 48]), (review, [22, 30, 30, 20, 55, 36]), *([(bonuses, [22,30,30,30,35,22,22])] if bonuses else [])):
         ws.freeze_panes = "A6"
         ws.sheet_view.showGridLines = False
         for cell in ws[5]:

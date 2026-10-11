@@ -112,7 +112,7 @@ def _room_labels(top, date_bottom, calendar_limit, height, width):
     return sorted(labels, key=lambda t: t["box"][0])
 
 
-def analyze_image(path, ocr, today):
+def analyze_image(path, ocr, today, *, read_clients=False):
     import cv2
     import numpy as np
     from PIL import Image
@@ -219,7 +219,7 @@ def analyze_image(path, ocr, today):
         boxes.append((int(x), int(y), int(bw), int(bh)))
     boxes.sort(key=lambda b: (b[1], b[0]))
     for x, y, bw, bh in boxes:
-        # Read only the short time header, not customer names or phone numbers.
+        # Time extraction remains independent of optional client phone extraction.
         header_height = int(min(max(.022 * h, 20), bh))
         header = image[max(0, y - 3):min(h, y + header_height), max(0, x - 2):min(w, x + bw + 2)]
         texts = ocr.read(header)
@@ -297,7 +297,37 @@ def analyze_image(path, ocr, today):
             result["issues"].append("partial_booking_at_bottom")
     if not result["intervals"]:
         result["issues"].append("no_readable_bookings")
+    if read_clients:
+        read_booking_phones(result["intervals"], image, ocr)
     return result
+
+
+def read_booking_phones(intervals, image, ocr):
+    """Transient full phone candidates only; never retain body text or names."""
+    from apps.ledger.client_bonuses import normalize_phone
+    from django.core.exceptions import ValidationError
+    h, w = image.shape[:2]
+    pattern = re.compile(r"(?<!\d)(?:\+?7|8)(?:[\s().-]*\d){10}(?!\d)")
+    for item in intervals:
+        x1, y1, x2, y2 = item["box"]
+        following = [i["box"][1] for i in intervals if i is not item and abs(i["box"][0]-x1)<.02
+                     and y1 < i["box"][1] < y2]
+        end = min([y2, *following])
+        crop = image[int(y1*h):int(end*h), int(x1*w):int(x2*w)]
+        candidates = {}
+        incomplete = False
+        for line in ocr.read(crop) if crop.size else []:
+            found = list(pattern.finditer(line["text"]))
+            if not found and re.search(r"(?:\+7|8)\s*[\d(). -]{6,}", line["text"]):
+                incomplete = True
+            for match in found:
+                try:
+                    number = normalize_phone(match[0])
+                    candidates[number] = max(candidates.get(number, 0), line["score"])
+                except ValidationError:
+                    pass
+        item["phone_candidates"] = [{"number": n, "score": s} for n, s in candidates.items()]
+        item["phone_incomplete"] = incomplete
 
 
 def merge_results(results, profiles):
@@ -321,8 +351,11 @@ def merge_results(results, profiles):
             if existing_index is not None:
                 matched_existing.add(existing_index)
                 existing = intervals[existing_index]
+                clients = sorted(set(existing.get("clients", [])) | set(item.get("clients", [])))
+                uncertain = existing.get("phone_uncertain") or item.get("phone_uncertain") or len(clients) > 1
                 if not existing.get("end") and item.get("end"):
                     existing.update(item)
+                existing["clients"], existing["phone_uncertain"] = clients, bool(uncertain)
             else:
                 intervals.append(item)
     split_required = len(dates) > 1 or len(organizations) > 2

@@ -34,7 +34,7 @@ def workbook_bytes(invoice, batch):
     main.append(["Счёт", f"{invoice.pk} / версия {invoice.version}"])
     main.append(["Всего по счёту", float(invoice.total)])
     main.append([])
-    columns = ["Дата", "Исполнитель", "Услуга / описание", "Время", "Часы / количество", "Сумма", "База без деления", "Пересекающиеся часы", "Оплачиваемые часы", "Доплата", "Причина доплаты / расчёт"]
+    columns = ["Дата", "Исполнитель", "Услуга / описание", "Время", "Часы / количество", "Сумма", "База без деления", "Пересекающиеся часы", "Оплачиваемые часы", "Доплата", "Причина доплаты / расчёт", "Клиентские доплаты", "Клиенты / правила"]
     sheets = {"Основной": main}
     main.append(columns)
     totals = {}
@@ -51,7 +51,8 @@ def workbook_bytes(invoice, batch):
                               float(line["units"]) if line.get("input_type") in ("time", "quantity") else None, float(line["amount"]),
                               float(line.get("base_amount") or line["amount"]), float(line.get("overlap_hours", 0)),
                               float(line["payable_hours"]) if line.get("payable_hours") is not None else None,
-                              float(line.get("bonus", 0)), safe_text("; ".join(filter(None, [line.get("bonus_reason"), line.get("calculation_note")])))])
+                              float(line.get("bonus", 0)), safe_text("; ".join(filter(None, [line.get("bonus_reason"), line.get("calculation_note")]))),
+                              float(line.get("client_bonus", 0)), safe_text("; ".join(f'{d["rule"]}: {d["client"]}, {d["start"]}–{d["end"]}, {d["amount"]} ₽' for d in line.get("client_bonus_details", [])))])
         totals[sheet] = totals.get(sheet, Decimal(0)) + Decimal(line["amount"])
     for name, ws in sheets.items():
         ws.append(["Итого по листу", None, None, None, None, float(totals.get(name, 0))])
@@ -83,7 +84,7 @@ def workbook_bytes(invoice, batch):
         for cell in ws[header_row]:
             cell.font = Font(bold=True, color="FFFFFF")
             cell.fill = PatternFill("solid", fgColor="28756A")
-        for index, width in enumerate(([22, 45, 22, 20] if ws == receipts_sheet else [22, 25, 40, 20, 22, 20, 20, 22, 22, 20, 48]), 1):
+        for index, width in enumerate(([22, 45, 22, 20] if ws == receipts_sheet else [22, 25, 40, 20, 22, 20, 20, 22, 22, 20, 48, 22, 55]), 1):
             ws.column_dimensions[get_column_letter(index)].width = width
         for row in ws:
             for cell in row:
@@ -115,11 +116,14 @@ def current_source(batch):
     from . import overlaps
     keys = {(r["employee"], date.fromisoformat(r["date"])) for r in records if r["employee"] and r["kind"] == "service"}
     pending = []
+    from .client_bonuses import reconcile, day_rows, source_token as bonus_token
+    bonus_rows = reconcile({(r["organization"], date.fromisoformat(r["date"])) for r in records if r["organization"]}, persist=False)
     try:
         pending = [c for c in overlaps.plan(list(overlaps.members(keys))) if c["requires_review"]]
     except ValidationError:
         pass  # Missing/archived tariffs are reported by the existing per-line validation.
     return {"profiles": profiles, "records": records,
+            "client_bonus_source": bonus_token(), "client_bonus_review": [r.pk for r in bonus_rows if r.client_bonus_review],
             "overlap_review": pending,
             "receipts": [json_safe_receipt(r) for r in OrganizationReceipt.objects.filter(organization_id__in=batch.organization_ids, date__range=(batch.start, batch.end), deleted_at=None).order_by("date", "id")],
             "rates": list(Rate.objects.filter(organization_id__in=batch.organization_ids).order_by("id").values()),
@@ -187,7 +191,10 @@ def refresh(batch):
         invoice.errors = [f'Запись #{r["id"]}: {r["error"] or "нужно проверить исполнителя"}' for r in invoice.lines
                           if r["id"] not in invoice.excluded_ids and (r["review"] or r["error"])]
         invoice.errors.extend(f'Запись #{r["id"]}: {r["calculation_note"]}' for r in invoice.lines if r.get("calculation_review"))
+        invoice.errors.extend(f'Запись #{r["id"]}: подтвердите клиентские доплаты и выбор получателя.' for r in invoice.lines if r.get("client_bonus_review"))
         ids = {r["id"] for r in invoice.lines}
+        if ids.intersection(data["client_bonus_review"]):
+            invoice.errors.append("Подтвердите актуальный выбор получателя клиентской доплаты.")
         if any(ids.intersection(c["members"]) for c in data["overlap_review"]):
             invoice.errors.append("Подтвердите актуальный ручной выбор пересекающихся студий.")
         for line in invoice.lines:

@@ -28,6 +28,9 @@ def claim_job():
                 offer.state, offer.error = "failed", exhausted.error
                 changed(offer, "recognition_failed", "system")
                 prompt(offer)
+        if exhausted.booking_import_id:
+            from apps.ledger.models import ClientBookingImport
+            ClientBookingImport.objects.filter(pk=exhausted.booking_import_id, revision=exhausted.revision).update(state="failed", error=exhausted.error)
     job = RecognitionJob.objects.filter(state="pending", available_at__lte=now).order_by("available_at", "id").first()
     if job:
         job.state, job.started_at, job.attempts = "running", now, job.attempts + 1
@@ -45,6 +48,9 @@ def run_once(ocr):
     began = time.perf_counter()
     leased_attempt = job.attempts
     try:
+        from apps.ledger.models import BonusClient, ClientBookingImport
+        from apps.ledger.booking_imports import sanitize_phones, finish_import
+        read_clients = BonusClient.objects.filter(active=True).exists()
         if job.offer_id:
             offer = ShiftOffer.objects.get(pk=job.offer_id)
             images = list(offer.images.filter(purged_at=None))
@@ -54,10 +60,16 @@ def run_once(ocr):
             results = []
             for image in images:
                 if image.sha256 not in by_digest:
-                    by_digest[image.sha256] = analyze_image(media_path(image.path), ocr, timezone.localdate(offer.created_at))
+                    by_digest[image.sha256] = (analyze_image(media_path(image.path), ocr, timezone.localdate(offer.created_at), read_clients=True)
+                        if read_clients else analyze_image(media_path(image.path), ocr, timezone.localdate(offer.created_at)))
                 results.append(by_digest[image.sha256])
+            sanitize_phones(results)
             result = merge_results(results, profiles)
             finish_offer(job, images, results, result, int((time.perf_counter() - began) * 1000))
+        elif job.booking_import_id:
+            obj = ClientBookingImport.objects.get(pk=job.booking_import_id)
+            results = [analyze_image(media_path(i["path"]), ocr, obj.date, read_clients=True) for i in obj.images]
+            finish_import(job, results, int((time.perf_counter() - began) * 1000))
         else:
             profile = RecognitionProfile.objects.get(pk=job.profile_id)
             original = profile.sample_path
@@ -102,6 +114,8 @@ def run_once(ocr):
                     prompt(offer)
             elif job.profile_id:
                 RecognitionProfile.objects.filter(pk=job.profile_id, sample_version=job.revision).update(sample_error=job.error)
+            elif job.booking_import_id:
+                ClientBookingImport.objects.filter(pk=job.booking_import_id, revision=job.revision).update(state="failed", error=job.error)
     return True
 
 
@@ -152,6 +166,8 @@ def finish_offer(job, images, results, result, elapsed_ms):
     assign_images(offer)
     if not offer.parts.exists():
         recompute(offer)
+    from apps.ledger.booking_imports import sync_offer
+    sync_offer(offer)
     offer.state = "needs_input" if offer.questions else "review"
     changed(offer, "recognized", "ocr", before)
     if not offer.questions and quality_gate():

@@ -233,6 +233,8 @@ def publish(offer_id, *, user_id=None, version=None):
     if offer.state not in ("review", "needs_input"):
         raise ValidationError("Это предложение уже опубликовано или закрыто.")
     validate_publish(offer)
+    from apps.ledger.booking_imports import sync_offer
+    sync_offer(offer)
     from .updates import prepare
     if prepare(offer):
         prompt(offer)
@@ -614,6 +616,14 @@ def purge_images():
     references = set(OfferImage.objects.exclude(path="").values_list("path", flat=True))
     references.update(RecognitionProfile.objects.exclude(header_path="").values_list("header_path", flat=True))
     references.update(RecognitionProfile.objects.exclude(sample_path="").values_list("sample_path", flat=True))
+    from apps.ledger.models import ClientBookingImport
+    for imported in ClientBookingImport.objects.all():
+        if imported.created_at < cutoff and imported.state in ("done", "failed"):
+            for item in imported.images:
+                remove_image(item["path"])
+            imported.images = []; imported.save(update_fields=("images",))
+        else:
+            references.update(i["path"] for i in imported.images)
     cutoff_stamp = (timezone.now() - timedelta(days=1)).timestamp()
     for path in (root / "images").glob("*.png"):
         if path.relative_to(root).as_posix() not in references and path.stat().st_mtime < cutoff_stamp:

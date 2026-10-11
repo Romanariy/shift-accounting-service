@@ -186,6 +186,9 @@ class Record(models.Model):
     overlap_factor = models.DecimalField(max_digits=3, decimal_places=2, default=1)
     bonus = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     bonus_reason = models.CharField(max_length=500, blank=True)
+    client_bonus = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    client_bonus_review = models.BooleanField(default=False)
+    client_bonus_details = models.JSONField(default=list, blank=True)
     calculation_note = models.TextField(blank=True)
     calculation_review = models.BooleanField(default=False)
     daily_calculation = models.ForeignKey(DailyCalculation, null=True, blank=True, on_delete=models.PROTECT, related_name="records")
@@ -333,3 +336,64 @@ class PaymentMessageUpdate(models.Model):
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=("recipient", "message_id"), name="ledger_payment_message_update")]
+
+
+class BonusClient(models.Model):
+    name = models.CharField(max_length=160, blank=True)
+    phones = models.JSONField(default=list)
+    active = models.BooleanField(default=True)
+    revision = models.PositiveIntegerField(default=1)
+
+
+class BonusRule(models.Model):
+    name = models.CharField(max_length=160)
+    organization = models.ForeignKey("shifts.Organization", on_delete=models.PROTECT)
+    clients = models.ManyToManyField(BonusClient, related_name="rules")
+    amount = models.DecimalField(max_digits=14, decimal_places=2)
+    start = models.DateField()
+    end = models.DateField(null=True, blank=True)
+    active = models.BooleanField(default=True)
+    revision = models.PositiveIntegerField(default=1)
+    # Edits remain a draft until preview/apply. Calculations use this snapshot.
+    applied = models.JSONField(default=dict, blank=True)
+
+
+class ClientBooking(models.Model):
+    client = models.ForeignKey(BonusClient, on_delete=models.PROTECT)
+    organization = models.ForeignKey("shifts.Organization", on_delete=models.PROTECT)
+    date = models.DateField(db_index=True)
+    start_time = models.TimeField(null=True, blank=True)
+    end_time = models.TimeField(null=True, blank=True)
+    rooms = models.JSONField(default=list, blank=True)
+    state = models.CharField(max_length=16, default="draft")
+    reason = models.CharField(max_length=500, blank=True)
+    revision = models.PositiveIntegerField(default=1)
+    sources = models.JSONField(default=list, blank=True)
+    selected_record = models.ForeignKey(Record, null=True, blank=True, on_delete=models.PROTECT, related_name="selected_client_bookings")
+    selected_rule = models.ForeignKey(BonusRule, null=True, blank=True, on_delete=models.PROTECT)
+    selection_token = models.CharField(max_length=64, blank=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=("client", "organization", "date", "start_time", "end_time"), name="ledger_unique_client_booking")]
+
+
+class ClientBonusCharge(models.Model):
+    booking = models.OneToOneField(ClientBooking, on_delete=models.PROTECT, related_name="charge")
+    record = models.ForeignKey(Record, null=True, blank=True, on_delete=models.PROTECT, related_name="client_charges")
+    rule = models.ForeignKey(BonusRule, null=True, blank=True, on_delete=models.PROTECT)
+    amount = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    state = models.CharField(max_length=24, default="waiting")
+    snapshot = models.JSONField(default=dict, blank=True)
+    revision = models.PositiveIntegerField(default=1)
+
+
+class ClientBookingImport(models.Model):
+    organization = models.ForeignKey("shifts.Organization", on_delete=models.PROTECT)
+    date = models.DateField()
+    images = models.JSONField(default=list)
+    results = models.JSONField(default=list)
+    state = models.CharField(max_length=16, default="pending")
+    error = models.TextField(blank=True)
+    revision = models.PositiveIntegerField(default=1)
+    created_at = models.DateTimeField(auto_now_add=True)
+    author = models.CharField(max_length=160, default="web")
