@@ -35,3 +35,75 @@
 .client-bonuses-panel .bonus-client-choices legend { padding: 0 6px; }
 .client-bonuses-panel .bonus-client-choices label { flex-direction: row; align-items: center; flex-wrap: wrap; gap: 8px; }
 .client-bonuses-panel .bonus-client-choices label small { margin-left: 24px; flex-basis: 100%; }
+
+/* Shared layout for actions, fields and narrow screens. */
+.accounting main,.accounting .panel,.accounting .two-columns>*{min-width:0}
+.accounting .table-scroll{position:relative;max-width:100%;overscroll-behavior-x:contain}
+.accounting .table-actions{display:flex;align-items:center;flex-wrap:wrap;column-gap:14px;row-gap:6px;min-width:150px}
+.accounting .invoice-actions{flex-direction:column;align-items:flex-start;gap:8px;min-width:170px}
+.accounting .table-actions .text-button{margin:0;text-align:left;white-space:normal}
+.accounting .table-actions small{margin:0}
+.accounting .text-button{display:inline-flex;align-items:center;justify-content:flex-start;gap:6px;max-width:100%;line-height:1.5;text-decoration:none}
+.accounting a.text-button:hover{text-decoration:underline}
+.accounting .button{max-width:100%;min-width:0;white-space:normal;overflow-wrap:anywhere;text-align:center;gap:6px}
+.accounting .actions,.accounting .form-actions{display:flex;align-items:center;flex-wrap:wrap;gap:10px}
+.accounting .form-actions{margin-top:16px}
+.accounting .row-actions{flex-wrap:wrap;gap:8px;min-width:100px}
+.accounting .row-actions button{width:32px;height:32px;flex-shrink:0}
+.accounting .sidebar svg,.accounting .org-avatar,.accounting .icon-button{flex-shrink:0}
+.accounting .dialog-heading{gap:16px;align-items:flex-start}
+.accounting .dialog-heading>div,.accounting .page-title>div,.accounting .panel-heading>div{min-width:0}
+.accounting .organization-row>div:not(.actions){min-width:0;overflow-wrap:anywhere}
+.accounting header>.eyebrow{min-width:0}
+.accounting header>.button{flex-shrink:0;white-space:nowrap;overflow-wrap:normal}
+.accounting .dialog-heading h2,.accounting .settings-summary strong,.accounting .organization-row strong{overflow-wrap:anywhere}
+.accounting .form-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+.accounting label{min-width:0}
+.accounting label>input:not([type=checkbox]),.accounting label>select,.accounting label>textarea{max-width:100%;width:100%}
+.accounting textarea{resize:vertical}
+.accounting fieldset{min-width:0;border:1px solid var(--line);border-radius:10px;padding:16px;margin:16px 0}
+.accounting legend{padding:0 6px;font-size:12px;font-weight:600}
+.accounting .form-grid label:has(>input[type=checkbox]){display:grid;grid-template-columns:16px minmax(0,1fr);column-gap:10px;align-items:start;align-content:start}
+.accounting .form-grid label:has(>input[type=checkbox])>input{grid-column:1;grid-row:1;margin:3px 0 0}
+.accounting .form-grid label:has(>input[type=checkbox])>span{grid-column:2;grid-row:1}
+.accounting .form-grid label:has(>input[type=checkbox])>small{grid-column:2}
+.accounting .padded>label,.accounting .padded>form>label{display:flex;flex-direction:column;gap:6px;margin:14px 0}
+.accounting .padded>label:has(>input[type=checkbox]),.accounting .padded>form>label:has(>input[type=checkbox]){flex-direction:row;align-items:flex-start}
+.accounting input[type=checkbox]{flex-shrink:0}
+.accounting .filters>label:not(:has(>input[type=checkbox])){flex-direction:column;align-items:stretch;gap:6px}
+.accounting .filters{align-items:flex-end}
+.accounting .month-picker{flex-wrap:wrap;max-width:100%}
+.accounting .month-picker label>input{width:auto;max-width:180px}
+.accounting .pagination{flex-wrap:wrap;gap:12px}
+.accounting .metric>strong{max-width:100%;white-space:normal;overflow-wrap:anywhere}
+.accounting .invoice-links>span{flex-basis:100%;overflow-wrap:anywhere}
+.accounting .bonus-rule-clients .form-grid{padding:12px 0}
+.accounting .bonus-rule-clients>.panel{margin:10px 0;padding:16px}
+.accounting .bonus-rule-clients>label{display:flex;flex-direction:column;gap:6px;margin-top:12px}
+.accounting .edit-dialog footer{flex-wrap:wrap}
+@media(max-width:850px){
+ .accounting .sidebar nav .nav-item{flex-shrink:0}
+ .accounting .sidebar nav .invoice-nav{flex-shrink:0}
+ .accounting .sidebar nav button{min-height:40px}
+ .accounting .invoice-filters{margin:16px}
+ .accounting .row-actions button{width:36px;height:36px}
+}
+@media(max-width:520px){
+ .accounting .form-grid{grid-template-columns:minmax(0,1fr)}
+ .accounting .form-grid .full{grid-column:1/-1}
+ .accounting .panel-heading,.accounting .dialog-heading{padding:18px 16px}
+ .accounting .padded{padding:16px}
+ .accounting .edit-dialog footer{padding:16px}
+ .accounting .edit-dialog footer .button{flex:1 1 110px}
+ .accounting .page-title{gap:14px}
+ .accounting .page-title>.actions{width:100%}
+ .accounting .page-title>.actions .button{flex:1 1 130px}
+ .accounting .filters>label:not(:has(>input[type=checkbox])){flex:1 1 130px}
+ .accounting .filters input{max-width:100%}
+ .accounting .invoice-filters{gap:12px}
+ .accounting .invoice-filters label{flex-basis:130px}
+ .accounting .form-actions .button{flex:1 1 130px}
+ .accounting .organization-row{padding:16px;gap:12px}
+ .accounting .organization-row>.actions{flex-basis:100%;margin-left:0}
+ .accounting .invoice-total{font-size:20px;white-space:normal;overflow-wrap:anywhere}
+}
