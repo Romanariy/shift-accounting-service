@@ -30,7 +30,7 @@ def sanitize_phones(results):
     return results
 
 
-def stage_bookings(intervals, organization, day, source):
+def stage_bookings(intervals, organization, day, source, *, automatic=False):
     staged = []
     if not organization or not day:
         return staged
@@ -45,6 +45,16 @@ def stage_bookings(intervals, organization, day, source):
                 end = None
             lookup = dict(client_id=client, organization_id=organization, date=day, start_time=start, end_time=end)
             obj = ClientBooking.objects.filter(**lookup).first()
+            upgraded = False
+            if obj is None and automatic and start and end and source.get("image_id"):
+                partials = [b for b in ClientBooking.objects.filter(client_id=client,
+                    organization_id=organization, date=day, start_time=start, end_time=None, state="draft")
+                    if interval.get("room", "") in b.rooms
+                    and any(s.get("image_id") == source["image_id"] for s in b.sources)]
+                if len(partials) == 1:
+                    obj = partials[0]
+                    obj.end_time = end
+                    upgraded = True
             if obj is None:
                 obj = ClientBooking.objects.create(**lookup)
             evidence = {**source, "card": digest({"source": source, "box": interval.get("box"),
@@ -52,11 +62,15 @@ def stage_bookings(intervals, organization, day, source):
                 "ambiguous_client": len(interval.get("clients", [])) > 1,
                 "uncertain": bool(source.get("date_conflict") or interval.get("phone_uncertain") or interval.get("phone_incomplete") or interval.get("issues"))}
             rooms = sorted(set(obj.rooms) | {interval.get("room", "")})
-            changed = False
+            changed = upgraded
             if evidence not in obj.sources:
                 obj.sources.append(evidence); changed = True
             if rooms != obj.rooms:
                 obj.rooms = rooms; changed = True
+            safe = (start and end and len(interval.get("clients", [])) == 1
+                    and not evidence["uncertain"])
+            if automatic and safe and obj.state == "draft":
+                obj.state = "confirmed"; changed = True
             if changed:
                 obj.revision += 1
                 obj.save()
@@ -65,19 +79,26 @@ def stage_bookings(intervals, organization, day, source):
     return sorted(set(staged))
 
 
+@transaction.atomic
 def sync_offer(offer):
-    # Even a schedule duplicate can contain new client evidence. Staging never changes earnings.
+    # A planned offer supplies evidence; only completed ledger work receives money.
+    lock()
     if not offer.date or any(q.get("key") in ("split", "date") for q in offer.questions):
         return
     from apps.offers.service import allowed_organizations
     allowed = allowed_organizations(offer.sender_id)
     images = list(offer.images.order_by("id"))
+    keys = set()
     for interval in offer.intervals:
         org = interval.get("organization", offer.organization_id)
         if org in allowed:
             index = interval.get("image_index", 0)
             stage_bookings([interval], org, offer.date, {"type": "offer", "id": offer.pk, "image": index,
-                "image_id": images[index].pk if type(index) is int and 0 <= index < len(images) else None})
+                "image_id": images[index].pk if type(index) is int and 0 <= index < len(images) else None}, automatic=True)
+            keys.add((org, offer.date))
+    if keys:
+        from .client_bonuses import apply_days
+        apply_days(keys, skip_frozen=True, actor="ocr:offer-bonus")
 
 
 def import_data(obj):

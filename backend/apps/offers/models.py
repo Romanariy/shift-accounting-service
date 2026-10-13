@@ -84,6 +84,7 @@ class OfferImage(models.Model):
     message_id = models.BigIntegerField()
     telegram_file_id = models.TextField(blank=True)
     recognized = models.JSONField(default=dict)
+    client_scan_token = models.CharField(max_length=64, blank=True)
     active = models.BooleanField(default=True)
     purged_at = models.DateTimeField(null=True)
 
@@ -93,6 +94,8 @@ class OfferImage(models.Model):
 
 
 class RecognitionJob(models.Model):
+    clients_only = models.BooleanField(default=False)
+    client_scan_token = models.CharField(max_length=64, blank=True)
     booking_import = models.ForeignKey("ledger.ClientBookingImport", null=True, blank=True, on_delete=models.CASCADE)
     offer = models.ForeignKey(ShiftOffer, null=True, on_delete=models.CASCADE, related_name="jobs")
     profile = models.ForeignKey(RecognitionProfile, null=True, on_delete=models.CASCADE)

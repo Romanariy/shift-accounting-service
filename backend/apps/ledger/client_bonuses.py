@@ -125,7 +125,7 @@ def assessment(booking, rows=None):
             "end": str(booking.end_time)[:5], "amount": chosen["amount"], "work": assignment(selected)}}, choices
 
 
-def reconcile(keys, rows=None, *, persist=True, refresh_rules=False):
+def reconcile(keys, rows=None, *, persist=True, refresh_rules=False, protected_ids=()):
     """Change only the client contribution; preserve tariff and manual bonus amounts."""
     from .engine import money
     keys = set(keys)
@@ -158,7 +158,7 @@ def reconcile(keys, rows=None, *, persist=True, refresh_rules=False):
             pk = result["record_id"]
             totals[pk] = totals.get(pk, Decimal(0)) + result["amount"]
             details.setdefault(pk, []).append(result["snapshot"])
-        if persist:
+        if persist and result.get("record_id") not in protected_ids and not (old and old.record_id in protected_ids):
             values = {"record_id": result.get("record_id"), "rule_id": result.get("rule_id"),
                       "amount": result.get("amount", Decimal(0)), "state": result["state"], "snapshot": result.get("snapshot", {})}
             before = json_safe(model_to_dict(old)) if old else None
@@ -176,13 +176,16 @@ def reconcile(keys, rows=None, *, persist=True, refresh_rules=False):
     return rows
 
 
-def apply_days(keys, *, correction=False, refresh_rules=False, actor="web:client-bonus"):
+def apply_days(keys, *, correction=False, refresh_rules=False, actor="web:client-bonus", skip_frozen=False):
     from .engine import record_dict, is_frozen, audit_record, sync_legacy
     rows = list(day_rows(keys))
     before = {r.pk: record_dict(r, include_group=False) for r in rows}
-    reconcile(keys, rows, refresh_rules=refresh_rules)
+    protected = {r.pk for r in rows if skip_frozen and is_frozen(r)}
+    reconcile(keys, rows, refresh_rules=refresh_rules, protected_ids=protected)
     changes = []
     for row in rows:
+        if row.pk in protected:
+            continue
         if any(before[row.pk][k] != json_safe(getattr(row, k)) for k in ("client_bonus", "client_bonus_details", "client_bonus_review")):
             # A condition revision is a concurrency guard, not a new financial result.
             semantic = lambda details: [{k: v for k, v in d.items() if k != "rule_revision"} for d in details]
@@ -266,6 +269,16 @@ def save_rule(payload, pk=None):
     if pk:
         require_revision(obj, payload)
     clients = payload.get("clients", list(obj.clients.values_list("pk", flat=True)) if pk else [])
+    entries = payload.get("client_entries", [])
+    if not isinstance(entries, list) or len(entries) > 100 or any(not isinstance(c, dict) for c in entries):
+        raise ValidationError("Некорректный список клиентов правила.")
+    if not isinstance(clients, list):
+        raise ValidationError("Некорректный список клиентов правила.")
+    clients = list(clients)
+    for entry in entries:
+        saved = save_client(entry, entry.get("id"))
+        if saved["id"] not in clients:
+            clients.append(saved["id"])
     wanted_active = obj._meta.get_field("active").to_python(payload.get("active", obj.active))
     if (not isinstance(clients, list) or not clients or any(type(i) is not int for i in clients) or len(set(clients)) != len(clients)
             or BonusClient.objects.filter(pk__in=clients).count() != len(clients)
@@ -288,6 +301,10 @@ def save_rule(payload, pk=None):
     if pk:
         obj.revision += 1
     obj.full_clean(); obj.save(); obj.clients.set(clients)
+    if not pk:
+        # New rules immediately apply to automatically recognised photographs.
+        obj.applied = rule_config(obj)
+        obj.save(update_fields=("applied",))
     log_change("bonus_rule", obj.pk, "update" if pk else "create", actor="web", before=before, after=data(obj))
     return data(obj)
 
@@ -387,5 +404,7 @@ def listing(resource, params, pk=None):
         for key, lookup in (("start", "date__gte"), ("end", "date__lte"), ("state", "state")):
             if params.get(key):
                 rows = rows.filter(**{lookup: params[key]})
+        if params.get("review") == "1":
+            rows = rows.filter(charge__state__in=("unconfirmed", "needs_interval", "needs_choice", "stale_selection", "rule_review"))
     offset, limit = max(0, int(params.get("offset", 0))), min(100, max(1, int(params.get("limit", 30))))
     return {"items": [data(r) for r in rows[offset:offset+limit]], "count": rows.count(), "offset": offset, "limit": limit}

@@ -23,13 +23,20 @@ class Command(BaseCommand):
             return
         from apps.offers.recognizer import LocalOCR
         from apps.offers.recognition_worker import run_once
+        from apps.offers.client_scans import enqueue_existing
         ocr = LocalOCR(settings.OFFER_MODEL_DIR, settings.OFFER_OCR_THREADS)
         # A real inference validates loaded weights before advertising readiness.
         import numpy as np
         ocr.read(np.full((64, 320, 3), 255, dtype=np.uint8))
         self.stdout.write("OCR models ready; confirmation required unless independent quality gate passes.")
+        next_scan = 0
         while True:
             close_old_connections()
+            if time.monotonic() >= next_scan:
+                queued = enqueue_existing()
+                if queued:
+                    self.stdout.write(f"Client bonuses: queued {queued} existing offer photograph sets.")
+                next_scan = time.monotonic() + 30
             worked = run_once(ocr)
             if options["once"]:
                 return

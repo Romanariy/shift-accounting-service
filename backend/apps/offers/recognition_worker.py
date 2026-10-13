@@ -22,7 +22,7 @@ def claim_job():
     for exhausted in RecognitionJob.objects.filter(state="running", started_at__lt=now - timedelta(minutes=3), attempts__gte=3):
         exhausted.state, exhausted.error = "failed", "Распознавание прервалось несколько раз. Повторите на сайте."
         exhausted.save()
-        if exhausted.offer_id:
+        if exhausted.offer_id and not exhausted.clients_only:
             offer = exhausted.offer
             if offer.version == exhausted.revision:
                 offer.state, offer.error = "failed", exhausted.error
@@ -35,7 +35,7 @@ def claim_job():
     if job:
         job.state, job.started_at, job.attempts = "running", now, job.attempts + 1
         job.save()
-        if job.offer_id:
+        if job.offer_id and not job.clients_only:
             ShiftOffer.objects.filter(pk=job.offer_id, state="collecting", version=job.revision).update(state="processing")
     return job
 
@@ -51,7 +51,12 @@ def run_once(ocr):
         from apps.ledger.models import BonusClient, ClientBookingImport
         from apps.ledger.booking_imports import sanitize_phones, finish_import
         read_clients = BonusClient.objects.filter(active=True).exists()
-        if job.offer_id:
+        if job.clients_only:
+            from .client_scans import scan
+            scan(job, ocr)
+            RecognitionJob.objects.filter(pk=job.pk, state="done", attempts=leased_attempt).update(
+                elapsed_ms=int((time.perf_counter() - began) * 1000))
+        elif job.offer_id:
             offer = ShiftOffer.objects.get(pk=job.offer_id)
             images = list(offer.images.filter(purged_at=None))
             profiles = [{"organization": p.organization_id, "rooms": p.rooms} for p in
@@ -106,7 +111,12 @@ def run_once(ocr):
                 return True
             job.state, job.error = "failed", "Не удалось обработать изображение. Проверьте OCR-worker и повторите распознавание."
             job.save()
-            if job.offer_id:
+            if job.clients_only:
+                if job.attempts < 3:
+                    job.state = "pending"
+                    job.available_at = timezone.now() + timedelta(seconds=30 * job.attempts)
+                    job.save()
+            elif job.offer_id:
                 offer = ShiftOffer.objects.get(pk=job.offer_id)
                 if offer.version == job.revision:
                     offer.state, offer.error = "failed", job.error

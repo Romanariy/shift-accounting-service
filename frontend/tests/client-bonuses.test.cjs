@@ -27,11 +27,26 @@ test('editing a rule preserves multiple clients and revision and can remove one'
  let saved,r;setup(async(url,p)=>{saved=p;return response({...rule,...p});});
  await act(async()=>{r=create(React.createElement(Console,props));});
  act(()=>button(r,'Изменить').props.onClick());
- const checks=r.root.findAllByType('input').filter(n=>String(n.props['aria-label']).startsWith('Клиент правила:'));
- assert.equal(checks.length,2);assert.ok(checks.every(n=>n.props.checked));
- act(()=>checks[1].props.onChange({target:{checked:false}}));
+ const fields=r.root.findAllByType('textarea');assert.equal(fields.length,2);
+ assert.match(fields[0].props.value,/79191234567/);
+ act(()=>r.root.findAllByType('button').filter(n=>text(n)==='Убрать клиента из правила')[1].props.onClick());
  await act(async()=>r.root.findByType('form').props.onSubmit({preventDefault(){}}));
  assert.deepEqual(saved.clients,[1]);assert.equal(saved.revision,3);assert.equal(saved.organization,9);
+ assert.equal(saved.client_entries.length,1);assert.equal(saved.client_entries[0].phones.length,2);
+ act(()=>r.unmount());
+});
+test('manual client input is inside the rule form without booking or upload tabs',async()=>{
+ let saved,r;setup(async(url,p)=>{saved=p;return response({...rule,...p});});
+ await act(async()=>{r=create(React.createElement(Console,props));});
+ assert.doesNotMatch(text(r.toJSON()),/Записи клиентов|Скриншоты|\+ Клиент|\+ Запись клиента/);
+ act(()=>button(r,'+ Правило').props.onClick());
+ act(()=>button(r,'Добавить клиента').props.onClick());
+ assert.equal(r.root.findAllByType('textarea').length,2);
+ act(()=>r.root.findByProps({'aria-label':'Имя клиента 1'}).props.onChange({target:{value:'Школа'}}));
+ act(()=>r.root.findByProps({'aria-label':'Телефоны клиента 1'}).props.onChange({target:{value:'+79191234567\n+79191234568'}}));
+ act(()=>r.root.findByProps({'aria-label':'Телефоны клиента 2'}).props.onChange({target:{value:'+79195555555'}}));
+ await act(async()=>r.root.findByType('form').props.onSubmit({preventDefault(){}}));
+ assert.equal(saved.client_entries.length,2);assert.equal(saved.client_entries[0].phones.length,2);
  act(()=>r.unmount());
 });
 test('zero-change preview still applies a rule and sends fingerprint',async()=>{
@@ -53,7 +68,7 @@ test('stale rule error preserves form and selected clients',async()=>{
  act(()=>r.unmount());
 });
 test('work details distinguish manual and client bonuses without exposing phones',()=>{
- let r;act(()=>{r=create(React.createElement(Details,{record:{base_amount:'1000',bonus:'500',client_bonus:'200',client_bonus_details:[{rule:'Школьные съёмки',client:'Школа',start:'12:00',end:'13:00',amount:'200'}]}}));});
+ let r;act(()=>{r=create(React.createElement(Details,{record:{base_amount:'1000',bonus:'500',client_bonus:'200',client_bonus_details:[{booking:1,rule:'Школьные съёмки',client:'Школа',start:'12:00',end:'13:00',amount:'200'}]}}));});
  assert.match(text(r.toJSON()),/Школьные съёмки.*Школа.*12:00/s);assert.match(text(r.toJSON()),/500/);
  assert.doesNotMatch(text(r.toJSON()),/79191234567/);act(()=>r.unmount());
 });

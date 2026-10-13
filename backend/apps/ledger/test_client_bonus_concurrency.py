@@ -59,3 +59,13 @@ class ClientBonusConcurrencyTests(TransactionTestCase):
             return save_booking({'revision':booking['revision']},booking['id'],'confirm')['id']
         self.concurrent(action)
         self.work.refresh_from_db();self.assertEqual((self.work.amount,self.work.client_bonus),(1600,200))
+
+    def test_two_workers_enqueue_existing_photos_once(self):
+        from apps.offers.models import ShiftOffer,OfferImage,RecognitionJob
+        from apps.offers.client_scans import enqueue_existing
+        offer=ShiftOffer.objects.create(source_key='concurrent-client-scan',sender_id=1,organization=self.org,
+                                       date=date(2026,4,12),state='claimed')
+        OfferImage.objects.create(offer=offer,path='test.png',sha256='test',message_id=1)
+        results=self.concurrent(lambda i:enqueue_existing())
+        self.assertCountEqual(results,[0,1])
+        self.assertEqual(RecognitionJob.objects.filter(clients_only=True).count(),1)
