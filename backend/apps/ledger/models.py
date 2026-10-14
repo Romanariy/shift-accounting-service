@@ -1,9 +1,11 @@
 import re
+import uuid
 from decimal import Decimal
 
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Q
+from django.utils import timezone
 
 
 def choices(*values):
@@ -241,9 +243,17 @@ class OrganizationReceipt(models.Model):
     deleted_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    author = models.CharField(max_length=160, default="web")
+    source = models.CharField(max_length=16, default="web")
+    telegram_chat_id = models.BigIntegerField(null=True, blank=True)
+    telegram_message_id = models.BigIntegerField(null=True, blank=True)
+    telegram_updated_at = models.DateTimeField(null=True, blank=True)
+    telegram_fingerprint = models.CharField(max_length=64, blank=True)
+    telegram_event_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ("-date", "-id")
+        constraints = [models.UniqueConstraint(fields=("telegram_chat_id", "telegram_message_id"), condition=Q(telegram_message_id__isnull=False), name="ledger_receipt_telegram_message")]
 
     def clean(self):
         self.payer = self.payer.strip()
@@ -254,6 +264,61 @@ class OrganizationReceipt(models.Model):
             raise ValidationError("Укажите плательщика.")
         if self.kind == "deduction" and not self.reason:
             raise ValidationError("Укажите причину вычета.")
+
+
+class EmployeePayout(models.Model):
+    request_key = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    employee = models.ForeignKey("shifts.Employee", on_delete=models.PROTECT)
+    organization = models.ForeignKey("shifts.Organization", on_delete=models.PROTECT)
+    work_date = models.DateField(db_index=True)
+    amount = models.DecimalField(max_digits=14, decimal_places=2)
+    paid_at = models.DateTimeField(default=timezone.now)
+    author = models.CharField(max_length=160)
+    source = models.CharField(max_length=16, default="web")
+    revision = models.PositiveIntegerField(default=1)
+    cancelled_at = models.DateTimeField(null=True, blank=True)
+    cancelled_by = models.CharField(max_length=160, blank=True)
+    cancel_reason = models.CharField(max_length=500, blank=True)
+
+
+class EmployeePayoutLine(models.Model):
+    payout = models.ForeignKey(EmployeePayout, on_delete=models.PROTECT, related_name="lines")
+    record = models.ForeignKey(Record, on_delete=models.PROTECT, related_name="payout_lines")
+    amount = models.DecimalField(max_digits=14, decimal_places=2)
+    snapshot = models.JSONField(default=dict)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=("payout", "record"), name="ledger_payout_record")]
+
+
+class EmployeePayoutPreview(models.Model):
+    token = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    selector = models.JSONField(default=dict)
+    fingerprint = models.CharField(max_length=64)
+    author = models.CharField(max_length=160)
+    source = models.CharField(max_length=16, default="web")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class EmployeePayoutMessage(models.Model):
+    chat_id = models.BigIntegerField()
+    message_id = models.BigIntegerField()
+    source_message_id = models.BigIntegerField(null=True, blank=True)
+    record_ids = models.JSONField(default=list)
+    base_text = models.TextField(blank=True)
+    revision = models.PositiveIntegerField(default=1)
+    delivered_revision = models.PositiveIntegerField(default=0)
+    fingerprint = models.CharField(max_length=64, blank=True)
+    state = models.CharField(max_length=16, default="pending")
+    lease = models.UUIDField(null=True, blank=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    retry_at = models.DateTimeField(null=True, blank=True)
+    attempts = models.PositiveIntegerField(default=0)
+    error = models.TextField(blank=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=("chat_id", "message_id"), name="ledger_payout_message"),
+                       models.UniqueConstraint(fields=("chat_id", "source_message_id"), condition=Q(source_message_id__isnull=False), name="ledger_payout_source_message")]
 
 
 class Batch(models.Model):

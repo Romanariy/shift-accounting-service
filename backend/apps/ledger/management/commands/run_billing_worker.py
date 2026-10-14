@@ -9,6 +9,7 @@ from apps.ledger.billing import schedule
 from apps.ledger.engine import accrue
 from apps.ledger.worker import deliver_once
 from apps.ledger import earnings
+from apps.ledger.payout_bot import refresh_messages, update_once as update_payout_once
 
 
 class Command(BaseCommand):
@@ -27,14 +28,14 @@ class Command(BaseCommand):
             while True:
                 errors = []
                 # Invoice validation failures must not block the independent earnings report.
-                for name, step in (("accrue", accrue), ("invoices", schedule), ("earnings", earnings.schedule)):
+                for name, step in (("accrue", accrue), ("invoices", schedule), ("earnings", earnings.schedule), ("payout-messages", refresh_messages)):
                     try:
                         await sync_to_async(step)()
                     except Exception as error:
                         logging.getLogger(__name__).exception("Billing step failed: %s", name)
                         errors.append(error)
                 if bot:
-                    for sender in (earnings.deliver_once, deliver_once):
+                    for sender in (earnings.deliver_once, deliver_once, update_payout_once):
                         try:
                             for _ in range(50):
                                 if not await sender(bot):

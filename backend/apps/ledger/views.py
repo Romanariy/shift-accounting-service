@@ -35,6 +35,8 @@ FIELDS = {
 def serialized(obj):
     if isinstance(obj, Record):
         result = record_dict(obj)
+        from .payouts import record_payment
+        result.update(record_payment(obj))
         if hasattr(obj, "allocation_changes"):
             result["allocation_changes"] = obj.allocation_changes
         return result
@@ -112,6 +114,10 @@ def api(request, resource, pk=None, action=None):
 
 
 def read(request, resource, pk, action):
+    if resource == "employee-payouts":
+        from .payouts import listing, details, payout_data
+        from .models import EmployeePayout
+        return reply(payout_data(EmployeePayout.objects.get(pk=pk)) if pk else details(request.GET) if request.GET.get("details") == "1" else listing(request.GET))
     if resource in ("bonus-clients", "bonus-rules", "client-bookings"):
         from .client_bonuses import listing
         return reply(listing(resource, request.GET, pk))
@@ -213,6 +219,8 @@ def read(request, resource, pk, action):
                 from .models import ClientBonusCharge
                 condition |= Q(entity_type="client_charge", entity_id__in=ClientBonusCharge.objects.filter(booking_id=entity_id).values_list("id", flat=True))
             if entity_type == "record":
+                from .models import EmployeePayoutLine
+                condition |= Q(entity_type="employee_payout", entity_id__in=EmployeePayoutLine.objects.filter(record_id=entity_id).values_list("payout_id", flat=True))
                 record = Record.objects.filter(pk=entity_id).first()
                 if record and record.legacy_id:
                     condition |= Q(entity_type=record.legacy_kind, entity_id=record.legacy_id)
@@ -225,6 +233,15 @@ def read(request, resource, pk, action):
 
 
 def mutate(request, resource, pk, action, payload):
+    if resource == "employee-payouts" and request.method == "POST":
+        from .payouts import preview, confirm, cancel
+        if pk and action == "cancel":
+            return reply(cancel(pk, payload))
+        if not pk and payload.get("action") == "preview":
+            return reply(preview(payload))
+        if not pk and payload.get("action") == "confirm":
+            return reply(confirm(payload))
+        raise ValidationError("Выберите предпросмотр, подтверждение или отмену выплаты.")
     if resource == "bonus-recalculate" and request.method == "POST":
         from .client_bonuses import recalculate as bonus_recalculate
         return reply(bonus_recalculate(payload))

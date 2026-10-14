@@ -63,6 +63,8 @@ async def process_message(message, edited=False):
     if not message.text or message.chat.type == "private":
         return
     logger = logging.getLogger(__name__)
+    kind = None
+    success = False
     try:
         kind = await sync_to_async(source_kind)(message.chat.id, getattr(message, "message_thread_id", None))
         if not kind:
@@ -72,15 +74,50 @@ async def process_message(message, edited=False):
             thread_id=getattr(message, "message_thread_id", None), user_id=author.id if author else None,
             username=(author.username or "") if author else "", author_name=author.full_name if author else "",
             expense=kind == "expense", today=timezone.localtime(message.date).date(), edited=edited)
+        success = True
     except ValidationError as error:
         response = "Не удалось сохранить: " + " ".join(error.messages)
     except Exception:
         logger.exception("Record processing failed: chat=%s message=%s", message.chat.id, message.message_id)
         response = "Не удалось подтвердить результат записи. Проверьте журнал на сайте."
     try:
-        await message.reply(response[:4000])
+        if kind == "service" and success:
+            from apps.ledger.payout_bot import existing_message
+            if await sync_to_async(existing_message)(message.chat.id, message.message_id, edited):
+                return
+        sent = await message.reply(response[:4000])
+        if kind == "service" and isinstance(getattr(sent, "message_id", None), int) and isinstance(getattr(getattr(sent, "chat", None), "id", None), int):
+            from apps.ledger.payout_bot import register_message
+            from apps.ledger.models import Record
+            ids = await sync_to_async(list)(Record.objects.filter(chat_id=message.chat.id, message_id=message.message_id, deleted_at=None).values_list("id", flat=True))
+            if ids:
+                await sync_to_async(register_message)(sent.chat.id, sent.message_id, ids, message.message_id)
     except Exception:
         logger.exception("Record confirmation delivery failed: chat=%s message=%s", message.chat.id, message.message_id)
+
+
+async def process_receipt(message, edited=False):
+    from apps.ledger.receipt_bot import matches, ingest_receipt
+    from apps.ledger.models import OrganizationReceipt
+    from zoneinfo import ZoneInfo
+    known = edited and await sync_to_async(OrganizationReceipt.objects.filter(telegram_chat_id=message.chat.id, telegram_message_id=message.message_id).exists)()
+    if not matches(message.text) and not known:
+        return False
+    if message.chat.type != "private" and await sync_to_async(source_kind)(message.chat.id, getattr(message, "message_thread_id", None)) != "service":
+        return False
+    try:
+        result = await sync_to_async(ingest_receipt)(message.text or "", user_id=message.from_user.id,
+            chat_id=message.chat.id, message_id=message.message_id, edited=edited,
+            today=message.date.astimezone(ZoneInfo("Asia/Yekaterinburg")).date(),
+            event_time=getattr(message, "edit_date", None) or message.date)
+        text = ("Получено" if result["kind"] == "receipt" else "Вычет") + f': {result["amount"]} ₽ · {date_label(result["date"])} · операция №{result["id"]}. Сохранено.'
+    except ValidationError as error:
+        text = "Не удалось сохранить: " + " ".join(error.messages)
+    except Exception:
+        logging.getLogger(__name__).exception("Receipt processing failed")
+        text = "Не удалось подтвердить запись. Проверьте поступления студии на сайте."
+    await message.reply(text)
+    return True
 
 
 async def process_ledger_callback(query, bot):
@@ -116,10 +153,24 @@ class Command(BaseCommand):
         if not settings.TELEGRAM_BOT_TOKEN:
             raise CommandError("Укажите TELEGRAM_BOT_TOKEN в окружении.")
         from aiogram import Bot, Dispatcher, F
-        from aiogram.filters import CommandStart
+        from aiogram.filters import CommandStart, Command as TelegramCommand
         from aiogram.types import CallbackQuery, Message
         from apps.offers.bot import process_callback as process_offer_callback, process_private
         bot, dispatcher = Bot(token=settings.TELEGRAM_BOT_TOKEN), Dispatcher()
+
+        @dispatcher.message(TelegramCommand("payouts"), F.chat.type == "private")
+        async def payout_list(message: Message):
+            from apps.ledger.payout_bot import navigation
+            try:
+                text, markup = await sync_to_async(navigation)(message.from_user.id)
+                await message.answer(text, reply_markup=markup)
+            except ValidationError as error:
+                await message.answer(" ".join(error.messages))
+
+        @dispatcher.callback_query(F.data.startswith("payout:"))
+        async def payout_callback(query: CallbackQuery):
+            from apps.ledger.payout_bot import callback
+            await callback(query, bot)
 
         @dispatcher.message(CommandStart(), F.chat.type == "private")
         async def start(message: Message):
@@ -136,12 +187,16 @@ class Command(BaseCommand):
 
         @dispatcher.message()
         async def on_message(message: Message):
+            if await process_receipt(message):
+                return
             if await process_private(message, bot):
                 return
             await process_message(message)
 
         @dispatcher.edited_message()
         async def on_edit(message: Message):
+            if await process_receipt(message, edited=True):
+                return
             await process_message(message, edited=True)
 
         self.stdout.write(self.style.SUCCESS("Service bot started."))

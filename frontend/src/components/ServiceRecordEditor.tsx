@@ -3,6 +3,7 @@ import { dateLabel } from "./date-format";
 
 import { FormEvent, useEffect, useRef, useState } from "react";
 import CalculationDetails from "./CalculationDetails";
+import {PayoutStatus} from "./EmployeePayouts";
 import SharedShiftDetails from "./SharedShiftDetails";
 import type { Bootstrap, Editor, Item } from "./accounting-types";
 
@@ -44,7 +45,7 @@ export function serviceRecordPayload(values: Record<string,any>, original: Recor
   return payload;
 }
 
-export default function ServiceRecordEditor({editor,data,busy,error,onClose,onSave}: {editor:Editor;data:Bootstrap|null;busy:boolean;error:string;onClose:()=>void;onSave:(values:Record<string,any>)=>void}) {
+export default function ServiceRecordEditor({editor,data,busy,error,onClose,onSave,onPayout}: {editor:Editor;data:Bootstrap|null;busy:boolean;error:string;onClose:()=>void;onSave:(values:Record<string,any>)=>void;onPayout?:(id:number)=>void}) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [values,setValues] = useState<Record<string,any>>({...editor.values,start_time:timeValue(editor.values.start_time),end_time:timeValue(editor.values.end_time)});
   const [preview,setPreview] = useState<any>(null);
@@ -100,6 +101,7 @@ export default function ServiceRecordEditor({editor,data,busy,error,onClose,onSa
   return <dialog ref={dialog} className="edit-dialog" onCancel={onClose}><form onSubmit={submit}>
     <div className="dialog-heading"><div><span className="eyebrow">СВОД / ЖУРНАЛ</span><h2>{editor.title}</h2></div><button type="button" className="icon-button" onClick={onClose} aria-label="Закрыть">×</button></div>
     {error&&<div role="alert" className="alert">{error}</div>}
+    {editor.values.id&&<div className="padded"><PayoutStatus record={editor.values as Item}/>{editor.values.payout_tracking&&Number(editor.values.payout_remaining)>0&&onPayout&&<button type="button" className="text-button" onClick={()=>onPayout(editor.values.id)}>Отметить выплату за сохранённую услугу</button>}</div>}
     <div className="form-grid">
       <label><span>Дата *</span><input aria-label="Дата" type="date" required value={values.date||""} onChange={e=>change("date",e.target.value)}/>{values.date&&<small>{dateLabel(values.date)}</small>}</label>
       <label><span>Организация *</span><select aria-label="Организация услуги" required value={values.organization||""} onChange={e=>change("organization",e.target.value)}><option value="">Не выбрано</option>{organizations.map(item=><option key={item.id} value={item.id}>{item.name}{!item.active&&" (архив)"}</option>)}</select></label>

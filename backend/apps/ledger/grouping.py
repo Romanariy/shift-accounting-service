@@ -87,6 +87,9 @@ def commit_records(rows, *, deleted=(), actor="web", allow_frozen=False):
         row.deleted_at = timezone.now()
         rows.append(row)
     old = {r.pk: Record.objects.get(pk=r.pk) for r in rows if r.pk}
+    from .payouts import guard_changes
+    for row in rows:
+        guard_changes(old.get(row.pk), row)
     from . import overlaps
     cross_keys = {k for r in rows if financial_change(old.get(r.pk), r)
                   for source in (r, old.get(r.pk)) if source is not None
@@ -221,4 +224,6 @@ def commit_records(rows, *, deleted=(), actor="web", allow_frozen=False):
     for row in rows:
         row.refresh_from_db()
         row.allocation_changes = updates
+    from .payout_bot import refresh_messages
+    refresh_messages()
     return rows

@@ -9,6 +9,7 @@ import useNotice from "./useNotice";
 import SharedShiftDetails from "./SharedShiftDetails";
 import RecalculationPreview from "./RecalculationPreview";
 import EarningsReport, { EarningsData } from "./EarningsReport";
+import {PayoutDialog, PayoutStatus} from "./EmployeePayouts";
 import Modal from "./AccountingModal";
 import ServiceRecordEditor from "./ServiceRecordEditor";
 import CalculationDetails from "./CalculationDetails";
@@ -95,6 +96,7 @@ export default function AccountingApp() {
   const [overlapRecord,setOverlapRecord] = useState<Item|null>(null);
   const [history,setHistory] = useState<Item|null>(null);
   const [paymentDialog,setPaymentDialog] = useState<{invoice:Item;cancel:boolean}|null>(null);
+  const [payoutSelector,setPayoutSelector] = useState<Record<string,unknown>|null>(null);
   const openPaymentAction=(invoice:Item,cancel:boolean)=>setPaymentDialog({invoice,cancel});
   const [recalc,setRecalc] = useState<any>(null);
   const refreshPayments = useCallback(async(signal?:AbortSignal,background=false)=>{
@@ -236,9 +238,11 @@ export default function AccountingApp() {
     <td><strong>{dateLabel(r.date)}</strong></td><td>{r.organization_name}</td>
     <td><strong>{r.kind==="service"?r.service_name:r.description}</strong><small>{r.kind==="service"?r.description:labels[r.kind]}</small><SharedShiftDetails group={r.daily_group}/></td>
     <td>{r.employee_name || "—"}</td><td>{["time","quantity"].includes(r.input_type)?r.units:"—"}{r.start_time && <small>{r.start_time.slice(0,5)}–{r.end_time?.slice(0,5)}</small>}</td>
-    <td className="right amount">{rub(r.amount)}<CalculationDetails record={r}/></td><td><span className={`pill ${r.review || r.error || r.calculation_review || r.client_bonus_review?"warning":""}`}>{r.review || r.error || r.calculation_review || r.client_bonus_review?"Проверить":"Учтено"}</span>{r.error && <small>{r.error}</small>}</td>
+    <td className="right amount">{rub(r.amount)}<CalculationDetails record={r}/><PayoutStatus record={r}/></td><td><span className={`pill ${r.review || r.error || r.calculation_review || r.client_bonus_review?"warning":""}`}>{r.review || r.error || r.calculation_review || r.client_bonus_review?"Проверить":"Учтено"}</span>{r.error && <small>{r.error}</small>}</td>
     <td><div className="row-actions">{r.employee&&["small_admin","big_admin"].includes(data?.services.find(s=>s.id===r.service)?.legacy_code)&&<button onClick={()=>setOverlapRecord(r)} title="Разобрать пересечение" aria-label="Разобрать пересечение">½</button>}
       <span className="action-tooltip" data-tooltip="Изменить запись"><button disabled={busy} onClick={()=>editRecord(r.kind,r)} title="Изменить запись" aria-label="Изменить запись">✎</button></span>
+      {r.payout_tracking&&r.employee&&Number(r.payout_remaining)>0&&<span className="action-tooltip" data-tooltip="Отметить выплату за услугу"><button disabled={busy} onClick={()=>setPayoutSelector({record:r.id})} title="Отметить выплату за услугу" aria-label="Отметить выплату за услугу">₽</button></span>}
+      {r.payout_tracking&&r.employee&&r.organization&&Number(r.payout_remaining)>0&&<span className="action-tooltip" data-tooltip="Оплатить работы за день"><button disabled={busy} onClick={()=>setPayoutSelector({employee:r.employee,organization:r.organization,date:r.date})} title="Оплатить работы за день" aria-label="Оплатить работы за день">Д</button></span>}
       <span className="action-tooltip" data-tooltip="История изменений"><button disabled={busy} onClick={()=>inspectHistory(r)} title="История изменений" aria-label="История изменений">◷</button></span>
       <span className="action-tooltip" data-tooltip="Удалить запись"><button disabled={busy} onClick={()=>removeRecord(r)} title="Удалить запись" aria-label="Удалить запись">×</button></span>
     </div></td>
@@ -247,7 +251,7 @@ export default function AccountingApp() {
     <main><header><span className="eyebrow">РАБОЧЕЕ ПРОСТРАНСТВО <span className="slash">/</span> {page==="overview"?"ОБЗОР":titles[page][0].toUpperCase()}</span><button className="button secondary compact" disabled={loading || busy} onClick={()=>run(load,"Данные обновлены")}>↻ Обновить</button></header>
     <div className="page-title"><div><h1>{titles[page][0]}</h1><p>{titles[page][1]}</p></div><div className="actions">{["overview","records"].includes(page)&&<><button className="button secondary" onClick={()=>editRecord("oneoff")}>Разовая работа</button><button className="button" onClick={()=>editRecord("service")}>+ Записать услугу</button></>}{page==="expenses"&&<button className="button" onClick={()=>editRecord("expense")}>+ Добавить расход</button>}{page==="invoices"&&<button className="button" disabled={busy} onClick={openBatchEditor}>Подготовить отчёты</button>}</div></div>
     {error&&<div role="alert" className="alert">{error}<button className="icon-button" onClick={()=>setError("")} title="Скрыть ошибку" aria-label="Скрыть ошибку">×</button></div>}{notice&&<div role="status" className="notice">{notice}<button className="icon-button" onClick={()=>setNotice("")} title="Скрыть уведомление" aria-label="Скрыть уведомление">×</button></div>}
-    {page==="earnings"&&<EarningsReport month={earningsMonth} maxMonth={isoToday().slice(0,7)} onMonthChange={setEarningsMonth} data={earnings} enabled={data?.settings.earnings_enabled!==false} approver={data?.contacts.find(c=>c.id===data.settings.approver)?.name} busy={busy} onRetry={(id,unknown)=>{
+    {page==="earnings"&&<EarningsReport onChanged={()=>run(load,"Выплаты обновлены")} month={earningsMonth} maxMonth={isoToday().slice(0,7)} onMonthChange={setEarningsMonth} data={earnings} enabled={data?.settings.earnings_enabled!==false} approver={data?.contacts.find(c=>c.id===data.settings.approver)?.name} busy={busy} onRetry={(id,unknown)=>{
       if(unknown&&!window.confirm("Telegram мог уже доставить главный отчёт. Проверьте чат. Повторить с риском дубликата?"))return;
       run(()=>api(`earnings-deliveries/${id}/retry/`,"POST",{confirm_duplicate_risk:unknown}),"Главный отчёт поставлен в очередь отправки");
     }}/>}
@@ -285,8 +289,9 @@ export default function AccountingApp() {
       }finally{setBusy(false);}
     }}/>}
     {history&&<HistoryDialog key={history.id} record={history} data={data} onClose={()=>setHistory(null)}/>}
+    {payoutSelector&&<PayoutDialog selector={payoutSelector} onClose={()=>setPayoutSelector(null)} onSaved={()=>run(load,"Выплата записана")}/>}
     {recalc&&<RecalculationPreview preview={recalc} busy={busy} onClose={()=>setRecalc(null)} onApply={async()=>{const r=await run(()=>api("recalculate/","POST",{start,end,fingerprint:recalc.fingerprint}),"Пересчёт выполнен");if(r)setRecalc(null);}}/>}
     {overlapRecord&&<OverlapReview record={overlapRecord} onClose={()=>setOverlapRecord(null)} onSaved={()=>run(load,"Расчёт сохранён")}/>}
-    {editor?.resource==="records"&&editor.values.kind==="service"?<ServiceRecordEditor key={editor.resource+String(editor.values.id)} editor={editor} data={data} busy={busy} error={error} onClose={()=>setEditor(null)} onSave={saveEditor}/>:editor&&<Modal key={editor.resource+String(editor.values.id)} editor={editor} busy={busy} error={error} onClose={()=>setEditor(null)} onSave={async values=>{if(editor.resource==="batch-draft"){const result=await run(()=>api("batches/","POST",values));if(result){setLinkedBatch(result);setSelectedBatch(result.id);setSelectedInvoice(null);setEditor(null);}}else if(editor.resource.startsWith("adjustment:")){const id=Number(editor.resource.split(":")[1]);const inv=selected?.invoices.find((i:Item)=>i.id===id);const result=await run(()=>api(`invoices/${id}/`,"PUT",{adjustments:[...(inv?.adjustments||[]),values]}));if(result)setEditor(null);}else await saveEditor(values);}}/>}
+    {editor?.resource==="records"&&editor.values.kind==="service"?<ServiceRecordEditor onPayout={id=>setPayoutSelector({record:id})} key={editor.resource+String(editor.values.id)} editor={editor} data={data} busy={busy} error={error} onClose={()=>setEditor(null)} onSave={saveEditor}/>:editor&&<Modal key={editor.resource+String(editor.values.id)} editor={editor} busy={busy} error={error} onClose={()=>setEditor(null)} onSave={async values=>{if(editor.resource==="batch-draft"){const result=await run(()=>api("batches/","POST",values));if(result){setLinkedBatch(result);setSelectedBatch(result.id);setSelectedInvoice(null);setEditor(null);}}else if(editor.resource.startsWith("adjustment:")){const id=Number(editor.resource.split(":")[1]);const inv=selected?.invoices.find((i:Item)=>i.id===id);const result=await run(()=>api(`invoices/${id}/`,"PUT",{adjustments:[...(inv?.adjustments||[]),values]}));if(result)setEditor(null);}else await saveEditor(values);}}/>}
     </main></div>;
 }

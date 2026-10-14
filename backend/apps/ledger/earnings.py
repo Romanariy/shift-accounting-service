@@ -15,7 +15,8 @@ from django.utils import timezone
 from apps.shifts.audit import log_change
 from .billing import safe_text
 from .engine import lock
-from .models import EarningsDelivery, Record
+from .models import EarningsDelivery, Record, EmployeePayoutLine
+from .payouts import START, paid_amounts
 
 REPORT_ZONE = ZoneInfo("Asia/Yekaterinburg")
 
@@ -33,7 +34,13 @@ def report_data(month, now=None):
     end = min(start.replace(day=monthrange(start.year, start.month)[1]), now.date())
     employees, review, unassigned, client_bonuses = {}, [], [], []
     rows = Record.objects.filter(date__range=(start, end), deleted_at=None, kind__in=("service", "oneoff")).select_related("employee", "organization").order_by("date", "id")
+    rows = list(rows)
+    paid = paid_amounts([r.pk for r in rows])
+    tracking = start >= START
     for r in rows:
+        if r.employee_id and tracking:
+            item = employees.setdefault(r.employee_id, {"employee_id": r.employee_id, "employee_name": r.employee.display_name, "amount": Decimal(0), "received": Decimal(0)})
+            item["received"] += paid.get(r.pk, Decimal(0))
         reasons = []
         if not r.employee_id:
             reasons.append("Не назначен сотрудник")
@@ -46,21 +53,36 @@ def report_data(month, now=None):
         if r.client_bonus_review:
             reasons.append("Требуется выбор или проверка клиентской доплаты")
         if reasons:
+            if tracking and r.employee_id and paid.get(r.pk, Decimal(0)):
+                employees[r.employee_id]["payout_review"] = True
             item = {"id": r.pk, "date": r.date.isoformat(), "organization_name": r.organization.name if r.organization_id else "Без организации",
                     "employee_name": r.employee_name or (r.employee.display_name if r.employee_id else "Без сотрудника"),
                     "amount": str(r.amount), "reason": "; ".join(reasons)}
             (unassigned if r.source == "auto" and not r.employee_id else review).append(item)
         else:
-            item = employees.setdefault(r.employee_id, {"employee_id": r.employee_id, "employee_name": r.employee.display_name, "amount": Decimal(0)})
+            item = employees.setdefault(r.employee_id, {"employee_id": r.employee_id, "employee_name": r.employee.display_name, "amount": Decimal(0), "received": Decimal(0)})
             item["amount"] += r.amount
             for detail in r.client_bonus_details:
                 client_bonuses.append({**detail, "record": r.pk, "organization": r.organization.name,
                                        "employee": r.employee.display_name})
     earnings = sorted(employees.values(), key=lambda r: (r["employee_name"].casefold(), r["employee_id"]))
     total = sum((r["amount"] for r in earnings), Decimal(0))
+    received_total = sum((r.get("received", Decimal(0)) for r in earnings), Decimal(0))
     for r in earnings:
+        r["received"] = f'{r.get("received", Decimal(0)):.2f}' if tracking else None
+        r["remaining"] = f'{r["amount"] - Decimal(r["received"]):.2f}' if tracking and not r.get("payout_review") else None
         r["amount"] = f'{r["amount"]:.2f}'
+    payments = []
+    for line in EmployeePayoutLine.objects.filter(payout__work_date__range=(start, end), payout__cancelled_at=None).select_related("payout", "payout__employee", "payout__organization").order_by("payout__paid_at", "id"):
+        payments.append({"payout": line.payout_id, "record": line.record_id, "paid_at": line.payout.paid_at.isoformat(),
+            "employee": line.payout.employee.display_name, "organization": line.payout.organization.name,
+            "work_date": str(line.payout.work_date), "service": line.snapshot.get("service_name", ""),
+            "amount": str(line.amount), "author": line.payout.author})
     return {"month": month, "start": start.isoformat(), "end": end.isoformat(), "generated_at": now.isoformat(),
+            "payout_tracking": tracking, "payout_tracking_start": str(START),
+            "received_total": f"{received_total:.2f}" if tracking else None,
+            "remaining_total": f"{total - received_total:.2f}" if tracking and not any(r.get("payout_review") for r in earnings) else None,
+            "payout_review": any(r.get("payout_review") for r in earnings), "payouts": payments,
             "employees": earnings, "total": f"{total:.2f}", "review": review, "unassigned": unassigned, "client_bonuses": client_bonuses,
             "review_total": f'{sum((Decimal(r["amount"]) for r in review), Decimal(0)):.2f}',
             "unassigned_total": f'{sum((Decimal(r["amount"]) for r in unassigned), Decimal(0)):.2f}'}
@@ -80,10 +102,15 @@ def workbook_bytes(data):
         ws.append(["Период", f'{date_label(data["start"])} — {date_label(data["end"])}'])
         ws.append(["Сформирован (Екатеринбург)", date_time_label(data["generated_at"])])
         ws.append([])
-    main.append(["Сотрудник", "Заработано, ₽"])
+    main.append(["Сотрудник", "Заработано, ₽", "Получено выплат, ₽", "Осталось выплатить, ₽"])
     for r in data["employees"]:
-        main.append([safe_text(r["employee_name"]), Decimal(r["amount"])])
-    main.append(["Итого заработано", Decimal(data["total"])])
+        main.append([safe_text(r["employee_name"]), Decimal(r["amount"]), Decimal(r["received"]) if r.get("received") is not None else "Нет данных",
+                     Decimal(r["remaining"]) if r.get("remaining") is not None else "На проверке" if r.get("payout_review") else "Нет данных"])
+    main.append(["Итого заработано", Decimal(data["total"]), Decimal(data["received_total"]) if data.get("received_total") is not None else "Нет данных",
+                 Decimal(data["remaining_total"]) if data.get("remaining_total") is not None else "На проверке" if data.get("payout_review") else "Нет данных"])
+    main.append(["Учёт выплат с 01.10.2026. Выплаты относятся к месяцу работ; отрицательный остаток — переплата."])
+    main.merge_cells(start_row=main.max_row, start_column=1, end_row=main.max_row, end_column=4)
+    main.row_dimensions[main.max_row].height = 32
     main.append([])
     main.append(["На проверку (не включено)", Decimal(data["review_total"])])
     main.append(["Начисления без сотрудника (не включено)", Decimal(data["unassigned_total"])])
@@ -97,10 +124,16 @@ def workbook_bytes(data):
         for r in data[key]:
             review.append([date.fromisoformat(r["date"]), safe_text(r["organization_name"]), safe_text(r["employee_name"]), Decimal(r["amount"]), safe_text(r["reason"]), label])
         review.append([label + " — итого", None, None, Decimal(data[key + "_total"])])
-    for ws, widths in ((main, [48, 48]), (review, [22, 30, 30, 20, 55, 36]), *([(bonuses, [22,30,30,30,35,22,22])] if bonuses else [])):
-        ws.freeze_panes = "A6"
+    payment_sheet = wb.create_sheet("Выплаты") if data.get("payouts") else None
+    if payment_sheet:
+        payment_sheet.append(["Фактическая выплата", "Сотрудник", "Студия", "Дата работы", "Услуга", "Сумма, ₽", "Автор", "Выплата №"])
+        for p in data["payouts"]:
+            payment_sheet.append([date_time_label(p["paid_at"]), safe_text(p["employee"]), safe_text(p["organization"]),
+                                  date.fromisoformat(p["work_date"]), safe_text(p["service"]), Decimal(p["amount"]), safe_text(p["author"]), str(p["payout"])])
+    for ws, widths in ((main, [40, 24, 24, 24]), (review, [22, 30, 30, 20, 55, 36]), *([(bonuses, [22,30,30,30,35,22,22])] if bonuses else []), *([(payment_sheet, [28,30,30,22,40,22,24,16])] if payment_sheet else [])):
+        ws.freeze_panes = "A2" if ws == payment_sheet else "A6"
         ws.sheet_view.showGridLines = False
-        for cell in ws[5]:
+        for cell in ws[1 if ws == payment_sheet else 5]:
             cell.font = Font(bold=True, color="FFFFFF")
             cell.fill = PatternFill("solid", fgColor="28756A")
         for i, width in enumerate(widths, 1):

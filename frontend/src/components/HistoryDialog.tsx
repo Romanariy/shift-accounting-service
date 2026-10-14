@@ -5,6 +5,7 @@ import { dateLabel, dateTimeLabel } from "./date-format";
 import type { Bootstrap, Item } from "./accounting-types";
 
 const fields: Record<string, string> = {
+  work_date:"Дата работы",cancelled_by:"Кто отменил выплату",cancel_reason:"Причина отмены выплаты",lines:"Оплаченные работы",paid:"Выплачено",remaining:"Осталось выплатить",to_pay:"К выплате",
   charge:"Начисление",snapshot:"Условия начисления",booking:"Запись клиента",record:"Выполненная смена",rule:"Правило",client_name:"Клиент",rule_revision:"Версия правила",
   client_bonus:"Клиентские доплаты",client_bonus_details:"Состав клиентских доплат",client_bonus_review:"Клиентские доплаты требуют проверки",client:"Клиент",clients:"Клиенты правила",phones:"Телефоны",revision:"Ревизия",applied:"Применённые условия",state:"Состояние",rooms:"Залы",sources:"Источники",selected_record:"Получатель",selected_rule:"Выбранное правило",selection_token:"Версия выбора",name:"Название",active:"Включено",start:"Начало действия",end:"Окончание действия",
   payment_state:"Статус оплаты",paid_at:"Дата подтверждения оплаты",paid_by:"Кто подтвердил оплату",payment_revision:"Ревизия оплаты",payment_recipients:"Получатели подтверждения",
@@ -85,7 +86,8 @@ export default function HistoryDialog({record, data, onClose}: {record:Item;data
     if (["employee", "employeeId"].includes(key)) return data?.employees.find(e => e.id === Number(value))?.name || `№${value}`;
     if (key === "service") return data?.services.find(s => s.id === Number(value))?.name || `№${value}`;
     if (["amount", "amountOverride"].includes(key) && Number.isFinite(Number(value))) return new Intl.NumberFormat("ru-RU", {style:"currency",currency:"RUB"}).format(Number(value));
-    if (key === "date" && /^\d{4}-\d{2}-\d{2}$/.test(String(value))) return dateLabel(String(value));
+    if (["date","work_date"].includes(key) && /^\d{4}-\d{2}-\d{2}$/.test(String(value))) return dateLabel(String(value));
+    if(key==="lines"&&Array.isArray(value))return value.map(l=>`№${l.record} · ${l.snapshot?.service_name||"Работа"} · ${format("amount",l.amount)}`).join("; ");
     if (key.endsWith("_at")) return timestamp(String(value));
     if (["kind", "source", "input_type", "workType", "state"].includes(key)) return values[String(value)] || String(value);
     return typeof value === "object" ? JSON.stringify(value) : String(value);
